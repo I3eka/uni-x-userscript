@@ -152,7 +152,6 @@ Thumbs.db
 build.bat
 build.sh
 test-full-build.sh
-repomix-output.md
 # .repomixignore
 # repomix.config.json
 repomix-output.md
