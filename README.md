@@ -96,7 +96,7 @@ def validate_view(request, lesson_id):
 
 <p align="center">
 
-  https://github.com/user-attachments/assets/2cf7bd10-e41d-42c0-ade6-1e3b607dabbb
+https://github.com/user-attachments/assets/8273ccc1-0de5-4246-8393-30539d5170e2
 
 </p>
 
