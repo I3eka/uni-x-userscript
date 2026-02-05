@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  Отмечает видео, симулирует активную вкладку и копирует блок вопроса/ответов по клику на его "отступы".
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
 // @icon         https://uni-x.almv.kz/favicon.ico
 // @grant        GM_cookie
 // @grant        GM_setClipboard
+// @grant        GM_addStyle
 // @connect      uni-x.almv.kz
 // @homepageURL  https://github.com/I3eka/uni-x-userscript
 // @supportURL   https://github.com/I3eka/uni-x-userscript/issues
@@ -19,7 +20,7 @@
 (function () {
     'use strict';
 
-    console.log("🚀 [UserScript] Инициализация...");
+    console.log("🚀 [UserScript v3.2] Инициализация...");
 
     /************ Глобальные константы ************/
     const VIDEO_WATCH_TOKEN_KEY = 'uniXVideoWatchToken';
@@ -36,16 +37,18 @@
         originalOpen.apply(this, arguments);
     };
 
-    // 0.2 Перехват Fetch (Важно для быстрой загрузки!)
+    // 0.2 Перехват Fetch (ОПТИМИЗИРОВАНО)
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
         const response = await originalFetch.apply(this, args);
-        const clone = response.clone();
-        const url = response.url;
-        
-        clone.text().then(text => {
-            processNetworkResponse(url, text);
-        }).catch(() => {});
+
+        // Оптимизация: клонируем только нужные запросы, чтобы не нагружать память
+        if (response.url && response.url.includes('/api/lessons/')) {
+            const clone = response.clone();
+            clone.text().then(text => {
+                processNetworkResponse(response.url, text);
+            }).catch(() => {});
+        }
 
         return response;
     };
@@ -77,7 +80,7 @@
     }
 
     /************ 1. Основная логика отметки (Hoisted Functions) ************/
-    
+
     async function markVideoAsWatched(lessonId, videoDuration) {
         const authToken = getSiteAuthToken();
         const xsrfToken = await getXsrfToken();
@@ -139,15 +142,26 @@
         });
     }
 
+    // ОПТИМИЗИРОВАНО: MutationObserver вместо setInterval
     function showVisualSuccess() {
-        const checkHeader = setInterval(() => {
-            const title = document.querySelector('h1');
-            if (title) {
-                title.style.borderBottom = "5px solid #50C878";
-                clearInterval(checkHeader);
+        const selector = 'h1';
+        const header = document.querySelector(selector);
+
+        if (header) {
+            header.style.borderBottom = "5px solid #50C878";
+            return;
+        }
+
+        const observer = new MutationObserver((mutations, obs) => {
+            const el = document.querySelector(selector);
+            if (el) {
+                el.style.borderBottom = "5px solid #50C878";
+                obs.disconnect();
             }
-        }, 200);
-        setTimeout(() => clearInterval(checkHeader), 10000);
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => observer.disconnect(), 15000);
     }
 
     /************ 2. UI Tools & Interceptors ************/
@@ -180,26 +194,9 @@
         };
     }
 
-    function enableTextSelectionAndCopy() {
-        const style = document.createElement('style');
-        style.textContent = `* {-webkit-user-select: text !important; -moz-user-select: text !important; user-select: text !important;}`;
-        (document.head || document.documentElement).appendChild(style);
-    }
-
-    function simulateActiveTab() {
-        try {
-            Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true });
-            Object.defineProperty(document, 'hidden', { value: false, writable: true });
-            window.dispatchEvent(new Event('focus'));
-        } catch (e) { }
-    }
-
-    function setupClickToCopyBlock() {
-        const BLOCK_CONTAINER_SELECTOR = `[class="md:pt-10 p-4 pr-1 bg-white mt-4 dark:bg-[#1a1a1a] rounded-b-xl flex flex-col"]`;
-        const EXCLUDED_ZONES = 'p.select-none, div.cursor-pointer[class*="rounded-"], button, [role="button"]';
-
-        const style = document.createElement('style');
-        style.textContent = `
+    function injectStyles() {
+        GM_addStyle(`
+            * { -webkit-user-select: text !important; -moz-user-select: text !important; user-select: text !important; }
             .copy-highlight-clickable {
                 outline: 2px solid #50C878 !important;
                 outline-offset: 4px;
@@ -207,8 +204,43 @@
                 cursor: copy !important;
                 transition: outline 0.15s ease-in-out;
             }
-        `;
-        (document.head || document.documentElement).appendChild(style);
+        `);
+    }
+
+    function simulateActiveTab() {
+        ['blur', 'visibilitychange', 'webkitvisibilitychange'].forEach(evt => {
+            window.addEventListener(evt, e => e.stopImmediatePropagation(), true);
+        });
+
+        try {
+            Object.defineProperty(document, 'visibilityState', {
+                get: () => 'visible',
+                configurable: true
+            });
+        } catch (e) { }
+
+        try {
+            Object.defineProperty(document, 'hidden', {
+                get: () => false,
+                configurable: true
+            });
+        } catch (e) { }
+
+        try {
+            Object.defineProperty(document, 'hasFocus', {
+                value: () => true,
+                configurable: true
+            });
+        } catch (e) { }
+
+        try {
+            window.dispatchEvent(new Event('focus'));
+        } catch (e) {}
+    }
+
+    function setupClickToCopyBlock() {
+        const BLOCK_CONTAINER_SELECTOR = `[class="md:pt-10 p-4 pr-1 bg-white mt-4 dark:bg-[#1a1a1a] rounded-b-xl flex flex-col"]`;
+        const EXCLUDED_ZONES = 'p.select-none, div.cursor-pointer[class*="rounded-"], button, [role="button"]';
 
         let currentHighlightContainer = null;
         function removeHighlight() {
@@ -262,17 +294,16 @@
     }
 
     /************ Инициализация при старте ************/
-    
+
     setupTokenInterceptor();
     simulateActiveTab();
+    injectStyles();
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
-            enableTextSelectionAndCopy();
             setupClickToCopyBlock();
         });
     } else {
-        enableTextSelectionAndCopy();
         setupClickToCopyBlock();
     }
 
