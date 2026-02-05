@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  Отмечает видео, симулирует активную вкладку и копирует блок вопроса/ответов по клику на его "отступы".
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -20,7 +20,7 @@
 (function () {
     'use strict';
 
-    console.log("🚀 [UserScript v3.2] Инициализация...");
+    console.log("🚀 [UserScript v3.3] Инициализация...");
 
     /************ Глобальные константы ************/
     const VIDEO_WATCH_TOKEN_KEY = 'uniXVideoWatchToken';
@@ -37,22 +37,23 @@
         originalOpen.apply(this, arguments);
     };
 
-    // 0.2 Перехват Fetch (ОПТИМИЗИРОВАНО)
-    const originalFetch = window.fetch;
-    window.fetch = async function(...args) {
-        const response = await originalFetch.apply(this, args);
+    // 0.2 Перехват Fetch через Proxy
+    window.fetch = new Proxy(window.fetch, {
+        apply: async function(target, thisArg, argumentsList) {
+            const response = await target.apply(thisArg, argumentsList);
 
-        if (response.url && response.url.includes('/api/lessons/')) {
-            const clone = response.clone();
-            clone.text().then(text => {
-                processNetworkResponse(response.url, text);
-            }).catch(() => {});
+            if (response.url && response.url.includes('/api/lessons/')) {
+                const clone = response.clone();
+                clone.text().then(text => {
+                    processNetworkResponse(response.url, text);
+                }).catch(() => {});
+            }
+
+            return response;
         }
+    });
 
-        return response;
-    };
-
-    console.log("🕵️ [Sniffer] Перехватчики XHR и Fetch активированы.");
+    console.log("🕵️ [Sniffer] Перехватчики XHR и Fetch (Proxy) активированы.");
 
     /************ Логика обработки ответов сервера ************/
     function processNetworkResponse(url, responseText) {
