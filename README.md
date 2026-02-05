@@ -95,8 +95,9 @@ def validate_view(request, lesson_id):
 ### 🎥 Демонстрация работы
 
 <p align="center">
-  <!-- Вставьте сюда ссылку на GIF -->
-  <img src="public/demo.gif" alt="Demonstration of Script Capabilities" width="100%" />
+
+  https://github.com/user-attachments/assets/2cf7bd10-e41d-42c0-ade6-1e3b607dabbb
+
 </p>
 
 ---
