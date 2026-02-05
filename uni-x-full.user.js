@@ -42,7 +42,6 @@
     window.fetch = async function(...args) {
         const response = await originalFetch.apply(this, args);
 
-        // Оптимизация: клонируем только нужные запросы, чтобы не нагружать память
         if (response.url && response.url.includes('/api/lessons/')) {
             const clone = response.clone();
             clone.text().then(text => {
@@ -142,7 +141,6 @@
         });
     }
 
-    // ОПТИМИЗИРОВАНО: MutationObserver вместо setInterval
     function showVisualSuccess() {
         const selector = 'h1';
         const header = document.querySelector(selector);
