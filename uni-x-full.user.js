@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  Отмечает видео, симулирует активную вкладку и копирует блок вопроса/ответов по клику на его "отступы".
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -20,11 +20,23 @@
 (function () {
     'use strict';
 
-    console.log("🚀 [UserScript v3.3] Инициализация...");
+    console.log("🚀 [UserScript v3.4] Инициализация...");
 
-    /************ Глобальные константы ************/
+    /************ Глобальные константы и Паттерны ************/
     const VIDEO_WATCH_TOKEN_KEY = 'uniXVideoWatchToken';
     const SOURCE_VIDEO_STATE_KEY = 'unix-video-state';
+    const DEFAULT_VIDEO_DURATION = 100;
+
+    if (!('URLPattern' in globalThis)) {
+        console.warn("⚠️ Ваш браузер не поддерживает URLPattern API. Скрипт может работать некорректно. Пожалуйста, обновите браузер (Chrome/Edge).");
+    }
+
+    // Шаблоны URL
+    const PATTERNS = {
+        apiLesson: new URLPattern({ pathname: '/api/lessons/:id' }),
+        apiWatched: new URLPattern({ pathname: '/api/lessons/:id/watched' }),
+        pageLesson: new URLPattern({ pathname: '*/lessons/:id' })
+    };
 
     /************ 0. СЕТЕВОЙ ПЕРЕХВАТЧИК (Sniffer) ************/
 
@@ -32,7 +44,8 @@
     const originalOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
         this.addEventListener('load', function() {
-            processNetworkResponse(url, this.responseText);
+            const fullUrl = new URL(url, window.location.origin).href;
+            processNetworkResponse(fullUrl, this.responseText);
         });
         originalOpen.apply(this, arguments);
     };
@@ -41,11 +54,12 @@
     window.fetch = new Proxy(window.fetch, {
         apply: async function(target, thisArg, argumentsList) {
             const response = await target.apply(thisArg, argumentsList);
+            const url = response?.url;
 
-            if (response.url && response.url.includes('/api/lessons/')) {
+            if (url?.includes('/api/lessons/')) {
                 const clone = response.clone();
                 clone.text().then(text => {
-                    processNetworkResponse(response.url, text);
+                    processNetworkResponse(url, text);
                 }).catch(() => {});
             }
 
@@ -57,12 +71,13 @@
 
     /************ Логика обработки ответов сервера ************/
     function processNetworkResponse(url, responseText) {
-        if (url && url.includes('/api/lessons/') && !url.includes('/watched')) {
+        if (PATTERNS.apiLesson.test(url) && !PATTERNS.apiWatched.test(url)) {
             try {
                 const data = JSON.parse(responseText);
+                const apiId = PATTERNS.apiLesson.exec(url)?.pathname.groups.id;
                 const currentUrlId = extractLessonId(window.location.href);
 
-                if (data && String(data.id) === String(currentUrlId)) {
+                if (data && String(data.id) === String(currentUrlId) && String(data.id) === String(apiId)) {
                     console.log(`📡 [API] Ответ сервера для урока ${data.id}. isWatched: ${data.isWatched}`);
 
                     if (data.isWatched === true) {
@@ -70,11 +85,16 @@
                         showVisualSuccess();
                     } else {
                         console.log("⚡ Сервер: Урок НЕ пройден. Инициализация отметки...");
-                        const duration = data.videoDurationEn || data.videoDurationKz || data.videoDurationRu || 100;
+                        const duration = data?.videoDurationEn ??
+                                         data?.videoDurationKz ??
+                                         data?.videoDurationRu ??
+                                         DEFAULT_VIDEO_DURATION;
+
                         markVideoAsWatched(data.id, duration);
                     }
                 }
             } catch (e) {
+                console.error("Ошибка обработки ответа:", e);
             }
         }
     }
@@ -125,18 +145,20 @@
     }
 
     function extractLessonId(url) {
-        const match = url.match(/lessons\/(\d+)/);
-        return match ? match[1] : null;
+        const match = PATTERNS.pageLesson.exec(url);
+        return match?.pathname?.groups?.id ?? null;
     }
 
     function getSiteAuthToken() {
-        try { return JSON.parse(localStorage.getItem('user-store'))?.token || null; } catch (e) { return null; }
+        try {
+            return JSON.parse(localStorage.getItem('user-store'))?.token ?? null;
+        } catch (e) { return null; }
     }
 
     function getXsrfToken() {
         return new Promise((resolve) => {
             GM_cookie.list({ name: "XSRF-Token" }, (cookies, error) => {
-                if (!error && cookies.length > 0) resolve(cookies[0].value);
+                if (!error && cookies?.length > 0) resolve(cookies[0].value);
                 else resolve(null);
             });
         });
@@ -171,19 +193,17 @@
             if (key === SOURCE_VIDEO_STATE_KEY) {
                 try {
                     const videoStateObject = JSON.parse(value);
-                    const lessonId = Object.keys(videoStateObject)[0];
-                    if (lessonId) {
-                        const lessonData = videoStateObject[lessonId];
-                        if (lessonData && lessonData.token && typeof lessonData.lastWatchedTime === 'number') {
-                            const { token, lastWatchedTime } = lessonData;
-                            const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+                    const lessonId = Object.keys(videoStateObject)?.[0];
+                    const lessonData = videoStateObject?.[lessonId];
+                    if (lessonData?.token && typeof lessonData?.lastWatchedTime === 'number') {
+                        const { token, lastWatchedTime } = lessonData;
+                        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
 
-                            if (lastWatchedTime >= payload.videoDuration) {
-                                if (localStorage.getItem(VIDEO_WATCH_TOKEN_KEY) !== token) {
-                                    localStorage.setItem(VIDEO_WATCH_TOKEN_KEY, token);
-                                    console.log("🎬 [Video] Новый токен просмотра сохранен.");
-                                    alert("Новый токен для просмотра видео успешно сохранен! Можете переходить к следующей лекции.");
-                                }
+                        if (lastWatchedTime >= payload.videoDuration) {
+                            if (localStorage.getItem(VIDEO_WATCH_TOKEN_KEY) !== token) {
+                                localStorage.setItem(VIDEO_WATCH_TOKEN_KEY, token);
+                                console.log("🎬 [Video] Новый токен просмотра сохранен.");
+                                alert("Новый токен для просмотра видео успешно сохранен! Можете переходить к следующей лекции.");
                             }
                         }
                     }
@@ -211,30 +231,23 @@
             window.addEventListener(evt, e => e.stopImmediatePropagation(), true);
         });
 
-        try {
-            Object.defineProperty(document, 'visibilityState', {
-                get: () => 'visible',
-                configurable: true
-            });
-        } catch (e) { }
+        const propertiesToHack = {
+            visibilityState: 'visible',
+            hidden: false,
+            hasFocus: () => true
+        };
 
-        try {
-            Object.defineProperty(document, 'hidden', {
-                get: () => false,
-                configurable: true
-            });
-        } catch (e) { }
+        for (const [prop, val] of Object.entries(propertiesToHack)) {
+            try {
+                Object.defineProperty(document, prop, {
+                    get: () => val,
+                    value: typeof val === 'function' ? val : undefined,
+                    configurable: true
+                });
+            } catch (e) {}
+        }
 
-        try {
-            Object.defineProperty(document, 'hasFocus', {
-                value: () => true,
-                configurable: true
-            });
-        } catch (e) { }
-
-        try {
-            window.dispatchEvent(new Event('focus'));
-        } catch (e) {}
+        try { window.dispatchEvent(new Event('focus')); } catch (e) {}
     }
 
     function setupClickToCopyBlock() {
@@ -251,7 +264,8 @@
 
         document.addEventListener('mouseover', event => {
             const target = event.target;
-            const container = target.closest(BLOCK_CONTAINER_SELECTOR);
+            const container = target?.closest?.(BLOCK_CONTAINER_SELECTOR);
+
             if (!container) { removeHighlight(); return; }
             if (target.closest(EXCLUDED_ZONES)) { removeHighlight(); }
             else if (currentHighlightContainer !== container) {
@@ -266,10 +280,12 @@
                 event.preventDefault();
                 event.stopPropagation();
                 let contentToCopy = '';
-                const questionElement = currentHighlightContainer.querySelector('p.select-none');
+                const questionText = currentHighlightContainer.querySelector('p.select-none')?.innerText?.trim() ?? '';
                 const answerElements = currentHighlightContainer.querySelectorAll('div.cursor-pointer[class*="rounded-"]');
-                if (questionElement) contentToCopy += questionElement.innerText.trim() + '\n\n';
+
+                if (questionText) contentToCopy += questionText + '\n\n';
                 answerElements.forEach(answer => contentToCopy += answer.innerText.replace(/\s+/g, ' ').trim() + '\n');
+
                 if (contentToCopy) {
                     GM_setClipboard(contentToCopy.trim());
                     showCopyNotification('✅ Блок скопирован!');
