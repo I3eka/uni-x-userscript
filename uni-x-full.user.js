@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools (with Quiz Helper)
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  Отмечает видео, копирует вопросы, кэширует правильные ответы и подсвечивает их.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -59,7 +59,7 @@
     // ==========================================
     // 2. UTILITIES & EVENT BUS
     // ==========================================
-    
+
     class EventBus {
         constructor() {
             this.listeners = {};
@@ -135,11 +135,28 @@
             }
         },
         injectStyles: () => {
+            const blockSelectors = CONFIG.selectors.copyBlock.split(',').map(s => s.trim());
+            const excludeHoverSelectors = CONFIG.selectors.excludeCopy.split(',')
+                .map(s => s.trim() + ':hover')
+                .join(', ');
+            const smartHoverRules = blockSelectors.map(block => {
+                return `${block}:hover:not(:has(${excludeHoverSelectors}))`;
+            }).join(',\n');
+
             GM_addStyle(`
                 * { -webkit-user-select: text !important; user-select: text !important; }
-                .copy-highlight-clickable { outline: 2px solid ${CONFIG.ui.successColor} !important; outline-offset: 4px; border-radius: 12px; cursor: copy !important; background-color: rgba(16, 185, 129, 0.05); }
                 .unix-correct-highlight { border: 2px solid ${CONFIG.ui.successColor} !important; background-color: rgba(16, 185, 129, 0.1) !important; position: relative; }
                 .unix-correct-highlight::after { content: '✅'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 1.2rem; }
+                ${smartHoverRules} {
+                    outline: 2px solid ${CONFIG.ui.successColor} !important;
+                    outline-offset: 4px;
+                    border-radius: 12px;
+                    cursor: copy !important;
+                    background-color: rgba(16, 185, 129, 0.05);
+                }
+                ${CONFIG.selectors.excludeCopy} {
+                    cursor: pointer !important;
+                }
             `);
         }
     };
@@ -148,8 +165,8 @@
     // 4. LOGIC MODULES
     // ==========================================
     class VideoManager {
-        constructor(eventBus) { 
-            this.interceptStorage(); 
+        constructor(eventBus) {
+            this.interceptStorage();
             if (eventBus) {
                 eventBus.on(CONFIG.events.LESSON_DATA_LOADED, this.processLessonData.bind(this));
             }
@@ -322,28 +339,19 @@
             } catch (e) {}
         }
         initClickToCopy() {
-            let activeEl = null;
-            document.body.addEventListener('mouseover', e => {
-                const target = e.target.closest(CONFIG.selectors.copyBlock);
-                if (activeEl && activeEl !== target) {
-                    activeEl.classList.remove('copy-highlight-clickable');
-                    activeEl = null;
-                }
-                if (target && !e.target.closest(CONFIG.selectors.excludeCopy)) {
-                    target.classList.add('copy-highlight-clickable');
-                    activeEl = target;
-                }
-            });
             document.body.addEventListener('click', e => {
-                if (activeEl && activeEl.contains(e.target) && !e.target.closest(CONFIG.selectors.excludeCopy)) {
-                    e.preventDefault(); e.stopPropagation();
-                    const q = activeEl.querySelector(CONFIG.selectors.questionText)?.innerText || '';
-                    const ans = Array.from(activeEl.querySelectorAll(CONFIG.selectors.answerContainer))
+                const targetBlock = e.target.closest(CONFIG.selectors.copyBlock);
+                if (targetBlock && !e.target.closest(CONFIG.selectors.excludeCopy)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const q = targetBlock.querySelector(CONFIG.selectors.questionText)?.innerText || '';
+                    const ans = Array.from(targetBlock.querySelectorAll(CONFIG.selectors.answerContainer))
                         .map(d => d.innerText.replace(/\s+/g, ' ').trim()).join('\n');
                     GM_setClipboard(`${q}\n${ans}`.trim());
                     UI.showToast('📋 Скопировано в буфер');
-                    activeEl.classList.remove('copy-highlight-clickable');
-                    activeEl = null;
+                    const originalOutline = targetBlock.style.outline;
+                    targetBlock.style.outline = `4px solid ${CONFIG.ui.successColor}`;
+                    setTimeout(() => { targetBlock.style.outline = originalOutline; }, 200);
                 }
             }, true);
         }
@@ -360,7 +368,7 @@
                     const data = JSON.parse(text);
                     eventBus.emit(CONFIG.events.LESSON_DATA_LOADED, data);
                 }
-                
+
                 if (CONFIG.api.quizCheckRegex.test(url)) {
                     const data = JSON.parse(text);
                     if (data) {
