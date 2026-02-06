@@ -1,14 +1,16 @@
 // ==UserScript==
-// @name         Mark Video Watched & Tools
+// @name         Mark Video Watched & Tools (with Quiz Helper)
 // @namespace    http://tampermonkey.net/
-// @version      3.5
-// @description  Отмечает видео, симулирует активную вкладку и копирует блок вопроса/ответов по клику на его "отступы".
+// @version      3.6
+// @description  Отмечает видео, копирует вопросы, кэширует правильные ответы и подсвечивает их.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
 // @icon         https://uni-x.almv.kz/favicon.ico
 // @grant        GM_cookie
 // @grant        GM_setClipboard
 // @grant        GM_addStyle
+// @grant        GM_setValue
+// @grant        GM_getValue
 // @connect      uni-x.almv.kz
 // @homepageURL  https://github.com/I3eka/uni-x-userscript
 // @supportURL   https://github.com/I3eka/uni-x-userscript/issues
@@ -20,11 +22,12 @@
 (function () {
     'use strict';
 
-    console.log("🚀 [UserScript v3.5] Инициализация...");
+    console.log("🚀 [UserScript v3.6] Инициализация...");
 
     /************ Глобальные константы ************/
     const VIDEO_WATCH_TOKEN_KEY = 'uniXVideoWatchToken';
     const SOURCE_VIDEO_STATE_KEY = 'unix-video-state';
+    const QUIZ_CACHE_KEY = 'uniX_Quiz_Answers_Cache';
 
     /************ 0. СЕТЕВОЙ ПЕРЕХВАТЧИК (Sniffer) ************/
 
@@ -41,14 +44,14 @@
     window.fetch = new Proxy(window.fetch, {
         apply: async function(target, thisArg, argumentsList) {
             const response = await target.apply(thisArg, argumentsList);
+            const url = response.url;
 
-            if (response.url && response.url.includes('/api/lessons/')) {
+            if (url && (url.includes('/api/lessons/') || (url.includes('/api/quizes/') && url.includes('/check')))) {
                 const clone = response.clone();
                 clone.text().then(text => {
-                    processNetworkResponse(response.url, text);
+                    processNetworkResponse(url, text);
                 }).catch(() => {});
             }
-
             return response;
         }
     });
@@ -74,13 +77,126 @@
                         markVideoAsWatched(data.id, duration);
                     }
                 }
-            } catch (e) {
-            }
+            } catch (e) {}
+        }
+
+        // 2. ТЕСТЫ (Кэширование)
+        if (url && url.includes('/api/quizes/') && url.includes('/check')) {
+            try {
+                const data = JSON.parse(responseText);
+                if (data && data.history) {
+                    cacheQuizAnswers(data.history);
+                }
+            } catch (e) { }
         }
     }
 
-    /************ 1. Основная логика отметки (Hoisted Functions) ************/
+    /************ Функции КЭШИРОВАНИЯ ************/
+    function cacheQuizAnswers(history) {
+        let questionBank = GM_getValue(QUIZ_CACHE_KEY, {});
+        let newCount = 0;
 
+        history.forEach(q => {
+            const correctAnswers = q.answers.filter(a => a.isCorrect);
+            if (correctAnswers.length > 0) {
+                const validAnswerTexts = new Set();
+                correctAnswers.forEach(a => {
+                    if (a.answerText) validAnswerTexts.add(normalizeText(a.answerText));
+                    if (a.answerTextRu) validAnswerTexts.add(normalizeText(a.answerTextRu));
+                    if (a.answerTextKz) validAnswerTexts.add(normalizeText(a.answerTextKz));
+                });
+                const answersArr = Array.from(validAnswerTexts);
+                [q.questionText, q.questionTextRu, q.questionTextKz].forEach(qText => {
+                    if (qText) {
+                        const normQ = normalizeText(qText);
+                        if (!questionBank[normQ]) {
+                            questionBank[normQ] = answersArr;
+                            newCount++;
+                        }
+                    }
+                });
+            }
+        });
+
+        if (newCount > 0) {
+            GM_setValue(QUIZ_CACHE_KEY, questionBank);
+            showNotification(`💾 Сохранено ответов: ${newCount}`, '#2563eb');
+        }
+    }
+
+    function normalizeText(str) {
+        if (!str) return '';
+        return str.replace(/\s+/g, ' ').trim();
+    }
+
+    function cleanQuestionText(str) {
+        if (!str) return '';
+        let cleaned = str.replace(/^\s*\d+\.\s*/, '');
+        return normalizeText(cleaned);
+    }
+
+    /************ Функции ПОДСВЕТКИ ************/
+    function highlightCorrectAnswers() {
+        const questionBank = GM_getValue(QUIZ_CACHE_KEY, {});
+
+        const questionElements = document.querySelectorAll('p.select-none');
+
+        questionElements.forEach(qEl => {
+            const rawText = qEl.innerText;
+            const cleanQ = cleanQuestionText(rawText);
+
+            const savedAnswers = questionBank[cleanQ];
+
+            if (savedAnswers) {
+                const parent = qEl.closest('.flex.flex-col');
+                if (!parent) return;
+
+                const answerContainers = parent.querySelectorAll('div.cursor-pointer[class*="rounded-"]');
+
+                answerContainers.forEach(ansContainer => {
+                    const pTag = ansContainer.querySelector('p.ml-4');
+                    const ansTextRaw = pTag ? pTag.innerText : ansContainer.innerText;
+                    const ansText = normalizeText(ansTextRaw);
+
+                    if (savedAnswers.includes(ansText)) {
+                        if (!ansContainer.dataset.unixMarked) {
+                            ansContainer.dataset.unixMarked = "true";
+                            ansContainer.classList.add('unix-correct-highlight');
+
+                            const icon = document.createElement('div');
+                            icon.innerHTML = '✅';
+                            icon.style.cssText = "margin-left: auto; font-size: 1.2rem;";
+                            ansContainer.appendChild(icon);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /************ Логика Observer (для SPA) ************/
+    function initQuizObserver() {
+        const observer = new MutationObserver((mutations) => {
+            let shouldCheck = false;
+            for (const mutation of mutations) {
+                if (mutation.addedNodes.length > 0 || mutation.type === 'characterData') {
+                    shouldCheck = true;
+                    break;
+                }
+            }
+            if (shouldCheck) {
+                highlightCorrectAnswers();
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+    }
+
+    /************ Стандартные функции видео (без изменений) ************/
     async function markVideoAsWatched(lessonId, videoDuration) {
         const authToken = getSiteAuthToken();
         const xsrfToken = await getXsrfToken();
@@ -116,8 +232,8 @@
 
             if (response.ok) {
                 console.log("🎉 Видео успешно отмечено! Перезагрузка страницы...");
-                showVisualSuccess();
-                setTimeout(() => window.location.reload(), 800);
+            showVisualSuccess();
+            setTimeout(() => window.location.reload(), 800);
             } else {
                 console.error("❌ Ошибка сервера:", response.status);
             }
@@ -145,25 +261,8 @@
     function showVisualSuccess() {
         const selector = 'h1';
         const header = document.querySelector(selector);
-
-        if (header) {
-            header.style.borderBottom = "5px solid #50C878";
-            return;
-        }
-
-        const observer = new MutationObserver((mutations, obs) => {
-            const el = document.querySelector(selector);
-            if (el) {
-                el.style.borderBottom = "5px solid #50C878";
-                obs.disconnect();
-            }
-        });
-
-        observer.observe(document.body, { childList: true, subtree: true });
-        setTimeout(() => observer.disconnect(), 15000);
+        if (header) header.style.borderBottom = "5px solid #50C878";
     }
-
-    /************ 2. UI Tools & Interceptors ************/
 
     function setupTokenInterceptor() {
         const originalSetItem = localStorage.setItem;
@@ -203,38 +302,34 @@
                 cursor: copy !important;
                 transition: outline 0.1s ease-in-out;
             }
+            .unix-correct-highlight {
+                border: 2px solid #10b981 !important;
+                background-color: rgba(16, 185, 129, 0.15) !important;
+                position: relative;
+            }
         `);
+    }
+
+    function showNotification(message, color = '#198754') {
+        const n = document.createElement('div');
+        n.textContent = message;
+        Object.assign(n.style, {
+            position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
+            backgroundColor: color, color: 'white', padding: '12px 24px', borderRadius: '8px',
+            zIndex: '100000', opacity: '0', transition: 'opacity 0.3s', fontSize: '16px', fontWeight: '500',
+            pointerEvents: 'none'
+        });
+        document.body.appendChild(n);
+        requestAnimationFrame(() => n.style.opacity = '1');
+        setTimeout(() => { n.style.opacity = '0'; setTimeout(() => n.remove(), 300); }, 2000);
     }
 
     function simulateActiveTab() {
         ['blur', 'visibilitychange', 'webkitvisibilitychange'].forEach(evt => {
             window.addEventListener(evt, e => e.stopImmediatePropagation(), true);
         });
-
-        try {
-            Object.defineProperty(document, 'visibilityState', {
-                get: () => 'visible',
-                configurable: true
-            });
-        } catch (e) { }
-
-        try {
-            Object.defineProperty(document, 'hidden', {
-                get: () => false,
-                configurable: true
-            });
-        } catch (e) { }
-
-        try {
-            Object.defineProperty(document, 'hasFocus', {
-                value: () => true,
-                configurable: true
-            });
-        } catch (e) { }
-
-        try {
-            window.dispatchEvent(new Event('focus'));
-        } catch (e) {}
+        try { Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true }); } catch (e) { }
+        try { Object.defineProperty(document, 'hidden', { get: () => false, configurable: true }); } catch (e) { }
     }
 
     function setupClickToCopyBlock() {
@@ -282,38 +377,23 @@
                 }
                 if (contentToCopy) {
                     GM_setClipboard(contentToCopy.trim());
-                    showCopyNotification('✅ Блок скопирован!');
+                    showNotification('✅ Блок скопирован!');
                     container.classList.remove(HIGHLIGHT_CLASS);
                     setTimeout(() => container.classList.add(HIGHLIGHT_CLASS), 100);
                 }
             }
         }, true);
-
-        function showCopyNotification(message) {
-            const n = document.createElement('div');
-            n.textContent = message;
-            Object.assign(n.style, {
-                position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
-                backgroundColor: '#198754', color: 'white', padding: '12px 24px', borderRadius: '8px',
-                zIndex: '100000', opacity: '0', transition: 'opacity 0.3s', fontSize: '16px', fontWeight: '500',
-                pointerEvents: 'none'
-            });
-            document.body.appendChild(n);
-            requestAnimationFrame(() => n.style.opacity = '1');
-            setTimeout(() => { n.style.opacity = '0'; setTimeout(() => n.remove(), 300); }, 1500);
-        }
     }
 
-    /************ Инициализация при старте ************/
+    /************ Запуск ************/
 
     setupTokenInterceptor();
     simulateActiveTab();
     injectStyles();
+    initQuizObserver();
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            setupClickToCopyBlock();
-        });
+        document.addEventListener('DOMContentLoaded', () => setupClickToCopyBlock());
     } else {
         setupClickToCopyBlock();
     }
