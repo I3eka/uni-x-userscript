@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  Отмечает видео, симулирует активную вкладку и копирует блок вопроса/ответов по клику на его "отступы".
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -20,7 +20,7 @@
 (function () {
     'use strict';
 
-    console.log("🚀 [UserScript v3.3] Инициализация...");
+    console.log("🚀 [UserScript v3.4] Инициализация...");
 
     /************ Глобальные константы ************/
     const VIDEO_WATCH_TOKEN_KEY = 'uniXVideoWatchToken';
@@ -201,7 +201,7 @@
                 outline-offset: 4px;
                 border-radius: 16px;
                 cursor: copy !important;
-                transition: outline 0.15s ease-in-out;
+                transition: outline 0.1s ease-in-out;
             }
         `);
     }
@@ -238,42 +238,53 @@
     }
 
     function setupClickToCopyBlock() {
-        const BLOCK_CONTAINER_SELECTOR = `[class="md:pt-10 p-4 pr-1 bg-white mt-4 dark:bg-[#1a1a1a] rounded-b-xl flex flex-col"]`;
         const EXCLUDED_ZONES = 'p.select-none, div.cursor-pointer[class*="rounded-"], button, [role="button"]';
+        const HIGHLIGHT_CLASS = 'copy-highlight-clickable';
 
-        let currentHighlightContainer = null;
-        function removeHighlight() {
-            if (currentHighlightContainer) {
-                currentHighlightContainer.classList.remove('copy-highlight-clickable');
-                currentHighlightContainer = null;
-            }
+        function findTargetContainer(target) {
+            if (!target || !target.closest) return null;
+            const el = target.closest('.rounded-b-xl.flex-col.bg-white, .rounded-b-xl.flex-col.dark\\:bg-\\[\\#1a1a1a\\]');
+            return el;
         }
 
-        document.addEventListener('mouseover', event => {
+        document.body.addEventListener('mouseover', event => {
             const target = event.target;
-            const container = target.closest(BLOCK_CONTAINER_SELECTOR);
-            if (!container) { removeHighlight(); return; }
-            if (target.closest(EXCLUDED_ZONES)) { removeHighlight(); }
-            else if (currentHighlightContainer !== container) {
-                removeHighlight();
-                container.classList.add('copy-highlight-clickable');
-                currentHighlightContainer = container;
+            const container = findTargetContainer(target);
+
+            document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach(el => {
+                if (el !== container) el.classList.remove(HIGHLIGHT_CLASS);
+            });
+
+            if (container) {
+                if (target.closest(EXCLUDED_ZONES)) {
+                    container.classList.remove(HIGHLIGHT_CLASS);
+                } else {
+                    container.classList.add(HIGHLIGHT_CLASS);
+                }
             }
         });
 
-        document.addEventListener('click', event => {
-            if (currentHighlightContainer && !event.target.closest(EXCLUDED_ZONES)) {
+        document.body.addEventListener('click', event => {
+            const target = event.target;
+            const container = findTargetContainer(target);
+
+            if (container && !target.closest(EXCLUDED_ZONES)) {
                 event.preventDefault();
                 event.stopPropagation();
                 let contentToCopy = '';
-                const questionElement = currentHighlightContainer.querySelector('p.select-none');
-                const answerElements = currentHighlightContainer.querySelectorAll('div.cursor-pointer[class*="rounded-"]');
+                const questionElement = container.querySelector('p.select-none');
+                const answerElements = container.querySelectorAll('div.cursor-pointer[class*="rounded-"]');
                 if (questionElement) contentToCopy += questionElement.innerText.trim() + '\n\n';
-                answerElements.forEach(answer => contentToCopy += answer.innerText.replace(/\s+/g, ' ').trim() + '\n');
+                if (answerElements) {
+                    answerElements.forEach(answer => {
+                        contentToCopy += answer.innerText.replace(/\s+/g, ' ').trim() + '\n';
+                    });
+                }
                 if (contentToCopy) {
                     GM_setClipboard(contentToCopy.trim());
                     showCopyNotification('✅ Блок скопирован!');
-                    removeHighlight();
+                    container.classList.remove(HIGHLIGHT_CLASS);
+                    setTimeout(() => container.classList.add(HIGHLIGHT_CLASS), 100);
                 }
             }
         }, true);
@@ -284,7 +295,8 @@
             Object.assign(n.style, {
                 position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
                 backgroundColor: '#198754', color: 'white', padding: '12px 24px', borderRadius: '8px',
-                zIndex: '100000', opacity: '0', transition: 'opacity 0.3s', fontSize: '16px', fontWeight: '500'
+                zIndex: '100000', opacity: '0', transition: 'opacity 0.3s', fontSize: '16px', fontWeight: '500',
+                pointerEvents: 'none'
             });
             document.body.appendChild(n);
             requestAnimationFrame(() => n.style.opacity = '1');
