@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @description  Отмечает видео, симулирует активную вкладку и копирует блок вопроса/ответов по клику на его "отступы".
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -20,7 +20,7 @@
 (function () {
     'use strict';
 
-    console.log("🚀 [UserScript v3.4] Инициализация...");
+    console.log("🚀 [UserScript v3.5] Инициализация...");
 
     /************ Глобальные константы ************/
     const VIDEO_WATCH_TOKEN_KEY = 'uniXVideoWatchToken';
@@ -180,7 +180,7 @@
 
                             if (lastWatchedTime >= payload.videoDuration) {
                                 if (localStorage.getItem(VIDEO_WATCH_TOKEN_KEY) !== token) {
-                                    localStorage.setItem(VIDEO_WATCH_TOKEN_KEY, token);
+                                    originalSetItem.call(this, VIDEO_WATCH_TOKEN_KEY, token);
                                     console.log("🎬 [Video] Новый токен просмотра сохранен.");
                                     alert("Новый токен для просмотра видео успешно сохранен! Можете переходить к следующей лекции.");
                                 }
@@ -189,7 +189,7 @@
                     }
                 } catch (e) { }
             }
-            originalSetItem.apply(this, arguments);
+            originalSetItem.call(this, key, value);
         };
     }
 
