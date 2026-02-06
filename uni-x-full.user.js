@@ -22,380 +22,327 @@
 (function () {
     'use strict';
 
-    console.log("🚀 [UserScript v3.6] Инициализация...");
-
-    /************ Глобальные константы ************/
-    const VIDEO_WATCH_TOKEN_KEY = 'uniXVideoWatchToken';
-    const SOURCE_VIDEO_STATE_KEY = 'unix-video-state';
-    const QUIZ_CACHE_KEY = 'uniX_Quiz_Answers_Cache';
-
-    /************ 0. СЕТЕВОЙ ПЕРЕХВАТЧИК (Sniffer) ************/
-
-    // 0.1 Перехват XMLHttpRequest
-    const originalOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url) {
-        this.addEventListener('load', function() {
-            processNetworkResponse(url, this.responseText);
-        });
-        originalOpen.apply(this, arguments);
+    // ==========================================
+    // 1. CONFIGURATION
+    // ==========================================
+    const CONFIG = {
+        api: {
+            base: 'https://uni-x.almv.kz/api',
+            lessonRegex: /\/api\/lessons\/(\d+)/,
+            quizCheckRegex: /\/api\/quizes\/.*\/check/
+        },
+        storage: {
+            videoToken: 'uniXVideoWatchToken',
+            videoState: 'unix-video-state',
+            quizCache: 'uniX_Quiz_Answers_Cache',
+            auth: 'user-store'
+        },
+        selectors: {
+            header: 'h1',
+            questionText: 'p.select-none',
+            answerContainer: 'div.cursor-pointer[class*="rounded-"]',
+            answerText: 'p.ml-4',
+            copyBlock: '.md\\:pt-10.p-4.pr-1.bg-white, .rounded-b-xl.flex-col',
+            excludeCopy: 'p.select-none, div.cursor-pointer[class*="rounded-"], button, [role="button"]'
+        },
+        ui: {
+            successColor: '#10b981',
+            errorColor: '#ef4444',
+            warnColor: '#f59e0b'
+        }
     };
 
-    // 0.2 Перехват Fetch через Proxy
-    window.fetch = new Proxy(window.fetch, {
-        apply: async function(target, thisArg, argumentsList) {
-            const response = await target.apply(thisArg, argumentsList);
-            const url = response.url;
-
-            if (url && (url.includes('/api/lessons/') || (url.includes('/api/quizes/') && url.includes('/check')))) {
-                const clone = response.clone();
-                clone.text().then(text => {
-                    processNetworkResponse(url, text);
-                }).catch(() => {});
-            }
-            return response;
-        }
-    });
-
-    console.log("🕵️ [Sniffer] Перехватчики XHR и Fetch (Proxy) активированы.");
-
-    /************ Логика обработки ответов сервера ************/
-    function processNetworkResponse(url, responseText) {
-        if (url && url.includes('/api/lessons/') && !url.includes('/watched')) {
+    // ==========================================
+    // 2. UTILITIES
+    // ==========================================
+    const Utils = {
+        parseJwt: (token) => {
             try {
-                const data = JSON.parse(responseText);
-                const currentUrlId = extractLessonId(window.location.href);
+                const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+                const binaryString = window.atob(base64);
+                const bytes = Uint8Array.from(binaryString, c => c.charCodeAt(0));
+                return JSON.parse(new TextDecoder().decode(bytes));
+            } catch (e) { return null; }
+        },
+        getCookie: (name) => {
+            const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+            if (match) return Promise.resolve(match[2]);
+            return new Promise(resolve => {
+                if (typeof GM_cookie !== 'undefined') {
+                    GM_cookie.list({ name }, (cookies, error) => resolve(!error && cookies[0] ? cookies[0].value : null));
+                } else resolve(null);
+            });
+        },
+        normalizeText: (str) => str ? str.replace(/\s+/g, ' ').trim() : ''
+    };
 
-                if (data && String(data.id) === String(currentUrlId)) {
-                    console.log(`📡 [API] Ответ сервера для урока ${data.id}. isWatched: ${data.isWatched}`);
-
-                    if (data.isWatched === true) {
-                        console.log("✅ Сервер: Урок уже пройден.");
-                        showVisualSuccess();
-                    } else {
-                        console.log("⚡ Сервер: Урок НЕ пройден. Инициализация отметки...");
-                        const duration = data.videoDurationEn || data.videoDurationKz || data.videoDurationRu || 100;
-                        markVideoAsWatched(data.id, duration);
-                    }
-                }
-            } catch (e) {}
-        }
-
-        // 2. ТЕСТЫ (Кэширование)
-        if (url && url.includes('/api/quizes/') && url.includes('/check')) {
-            try {
-                const data = JSON.parse(responseText);
-                if (data && data.history) {
-                    cacheQuizAnswers(data.history);
-                }
-            } catch (e) { }
-        }
-    }
-
-    /************ Функции КЭШИРОВАНИЯ ************/
-    function cacheQuizAnswers(history) {
-        let questionBank = GM_getValue(QUIZ_CACHE_KEY, {});
-        let newCount = 0;
-
-        history.forEach(q => {
-            const correctAnswers = q.answers.filter(a => a.isCorrect);
-            if (correctAnswers.length > 0) {
-                const validAnswerTexts = new Set();
-                correctAnswers.forEach(a => {
-                    if (a.answerText) validAnswerTexts.add(normalizeText(a.answerText));
-                    if (a.answerTextRu) validAnswerTexts.add(normalizeText(a.answerTextRu));
-                    if (a.answerTextKz) validAnswerTexts.add(normalizeText(a.answerTextKz));
-                });
-                const answersArr = Array.from(validAnswerTexts);
-                [q.questionText, q.questionTextRu, q.questionTextKz].forEach(qText => {
-                    if (qText) {
-                        const normQ = normalizeText(qText);
-                        if (!questionBank[normQ]) {
-                            questionBank[normQ] = answersArr;
-                            newCount++;
-                        }
-                    }
-                });
-            }
-        });
-
-        if (newCount > 0) {
-            GM_setValue(QUIZ_CACHE_KEY, questionBank);
-            showNotification(`💾 Сохранено ответов: ${newCount}`, '#2563eb');
-        }
-    }
-
-    function normalizeText(str) {
-        if (!str) return '';
-        return str.replace(/\s+/g, ' ').trim();
-    }
-
-    function cleanQuestionText(str) {
-        if (!str) return '';
-        let cleaned = str.replace(/^\s*\d+\.\s*/, '');
-        return normalizeText(cleaned);
-    }
-
-    /************ Функции ПОДСВЕТКИ ************/
-    function highlightCorrectAnswers() {
-        const questionBank = GM_getValue(QUIZ_CACHE_KEY, {});
-
-        const questionElements = document.querySelectorAll('p.select-none');
-
-        questionElements.forEach(qEl => {
-            const rawText = qEl.innerText;
-            const cleanQ = cleanQuestionText(rawText);
-
-            const savedAnswers = questionBank[cleanQ];
-
-            if (savedAnswers) {
-                const parent = qEl.closest('.flex.flex-col');
-                if (!parent) return;
-
-                const answerContainers = parent.querySelectorAll('div.cursor-pointer[class*="rounded-"]');
-
-                answerContainers.forEach(ansContainer => {
-                    const pTag = ansContainer.querySelector('p.ml-4');
-                    const ansTextRaw = pTag ? pTag.innerText : ansContainer.innerText;
-                    const ansText = normalizeText(ansTextRaw);
-
-                    if (savedAnswers.includes(ansText)) {
-                        if (!ansContainer.dataset.unixMarked) {
-                            ansContainer.dataset.unixMarked = "true";
-                            ansContainer.classList.add('unix-correct-highlight');
-
-                            const icon = document.createElement('div');
-                            icon.innerHTML = '✅';
-                            icon.style.cssText = "margin-left: auto; font-size: 1.2rem;";
-                            ansContainer.appendChild(icon);
-                        }
-                    }
-                });
-            }
-        });
-    }
-
-    /************ Логика Observer (для SPA) ************/
-    function initQuizObserver() {
-        const observer = new MutationObserver((mutations) => {
-            let shouldCheck = false;
-            for (const mutation of mutations) {
-                if (mutation.addedNodes.length > 0 || mutation.type === 'characterData') {
-                    shouldCheck = true;
-                    break;
-                }
-            }
-            if (shouldCheck) {
-                highlightCorrectAnswers();
-            }
-        });
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            characterData: true
-        });
-    }
-
-    /************ Стандартные функции видео (без изменений) ************/
-    async function markVideoAsWatched(lessonId, videoDuration) {
-        const authToken = getSiteAuthToken();
-        const xsrfToken = await getXsrfToken();
-        const videoWatchToken = localStorage.getItem(VIDEO_WATCH_TOKEN_KEY);
-
-        if (!authToken) { console.warn("❌ Нет Auth токена."); return; }
-        if (!xsrfToken) { console.warn("❌ Нет XSRF токена."); return; }
-
-        if (!videoWatchToken) {
-            console.warn("⚠️ Нет токена просмотра видео.");
+    // ==========================================
+    // 3. UI MANAGER
+    // ==========================================
+    const UI = {
+        showToast: (message, type = 'success') => {
+            const color = type === 'error' ? CONFIG.ui.errorColor : (type === 'warn' ? CONFIG.ui.warnColor : CONFIG.ui.successColor);
+            const n = document.createElement('div');
+            n.textContent = message;
+            Object.assign(n.style, {
+                position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%) translateY(20px)',
+                backgroundColor: color, color: '#fff', padding: '10px 24px', borderRadius: '12px',
+                zIndex: '9999999', opacity: '0', transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                fontSize: '14px', fontWeight: '600', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', pointerEvents: 'none'
+            });
+            document.body.appendChild(n);
+            requestAnimationFrame(() => { n.style.opacity = '1'; n.style.transform = 'translateX(-50%) translateY(0)'; });
             setTimeout(() => {
-                 alert("Скрипт: Пожалуйста, посмотрите это видео до конца вручную один раз, чтобы я мог запомнить ваш 'почерк' просмотра (токен). Следующие будут отмечены автоматически.");
-            }, 1000);
-            return;
-        }
-
-        try {
-            console.log(`⏳ Отправка запроса на отметку (ID: ${lessonId}, Длительность: ${videoDuration})...`);
-
-            const response = await fetch(`https://uni-x.almv.kz/api/lessons/${lessonId}/watched`, {
-                method: 'POST',
-                headers: {
-                    'cookie': `XSRF-Token=${xsrfToken}`,
-                    "content-type": "application/json",
-                    "authorization": `Bearer ${authToken}`
-                },
-                body: JSON.stringify({
-                    token: videoWatchToken,
-                    "videoDuration": Math.floor(videoDuration),
-                    "videoWatched": Math.floor(videoDuration)
-                })
-            });
-
-            if (response.ok) {
-                console.log("🎉 Видео успешно отмечено! Перезагрузка страницы...");
-            showVisualSuccess();
-            setTimeout(() => window.location.reload(), 800);
-            } else {
-                console.error("❌ Ошибка сервера:", response.status);
+                n.style.opacity = '0'; n.style.transform = 'translateX(-50%) translateY(10px)';
+                setTimeout(() => n.remove(), 300);
+            }, 3000);
+        },
+        markHeaderSuccess: () => {
+            const header = document.querySelector(CONFIG.selectors.header);
+            if (header) {
+                header.style.borderBottom = `5px solid ${CONFIG.ui.successColor}`;
+                header.style.transition = 'border-color 0.5s ease';
             }
-        } catch (error) { console.error('❌ Ошибка fetch запроса:', error); }
-    }
+        },
+        injectStyles: () => {
+            GM_addStyle(`
+                * { -webkit-user-select: text !important; user-select: text !important; }
+                .copy-highlight-clickable { outline: 2px solid ${CONFIG.ui.successColor} !important; outline-offset: 4px; border-radius: 12px; cursor: copy !important; background-color: rgba(16, 185, 129, 0.05); }
+                .unix-correct-highlight { border: 2px solid ${CONFIG.ui.successColor} !important; background-color: rgba(16, 185, 129, 0.1) !important; position: relative; }
+                .unix-correct-highlight::after { content: '✅'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 1.2rem; }
+            `);
+        }
+    };
 
-    function extractLessonId(url) {
-        const match = url.match(/lessons\/(\d+)/);
-        return match ? match[1] : null;
-    }
-
-    function getSiteAuthToken() {
-        try { return JSON.parse(localStorage.getItem('user-store'))?.token || null; } catch (e) { return null; }
-    }
-
-    function getXsrfToken() {
-        return new Promise((resolve) => {
-            GM_cookie.list({ name: "XSRF-Token" }, (cookies, error) => {
-                if (!error && cookies.length > 0) resolve(cookies[0].value);
-                else resolve(null);
-            });
-        });
-    }
-
-    function showVisualSuccess() {
-        const selector = 'h1';
-        const header = document.querySelector(selector);
-        if (header) header.style.borderBottom = "5px solid #50C878";
-    }
-
-    function setupTokenInterceptor() {
-        const originalSetItem = localStorage.setItem;
-        localStorage.setItem = function (key, value) {
-            if (key === SOURCE_VIDEO_STATE_KEY) {
-                try {
-                    const videoStateObject = JSON.parse(value);
-                    const lessonId = Object.keys(videoStateObject)[0];
-                    if (lessonId) {
-                        const lessonData = videoStateObject[lessonId];
-                        if (lessonData && lessonData.token && typeof lessonData.lastWatchedTime === 'number') {
-                            const { token, lastWatchedTime } = lessonData;
-                            const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-
-                            if (lastWatchedTime >= payload.videoDuration) {
-                                if (localStorage.getItem(VIDEO_WATCH_TOKEN_KEY) !== token) {
-                                    originalSetItem.call(this, VIDEO_WATCH_TOKEN_KEY, token);
-                                    console.log("🎬 [Video] Новый токен просмотра сохранен.");
-                                    alert("Новый токен для просмотра видео успешно сохранен! Можете переходить к следующей лекции.");
+    // ==========================================
+    // 4. LOGIC MODULES
+    // ==========================================
+    class VideoManager {
+        constructor() { this.interceptStorage(); }
+        interceptStorage() {
+            const originalSetItem = localStorage.setItem;
+            localStorage.setItem = function (key, value) {
+                if (key === CONFIG.storage.videoState) {
+                    try {
+                        const state = JSON.parse(value);
+                        const lessonData = Object.values(state)[0];
+                        if (lessonData?.token && typeof lessonData.lastWatchedTime === 'number') {
+                            const payload = Utils.parseJwt(lessonData.token);
+                            if (payload && lessonData.lastWatchedTime >= payload.videoDuration) {
+                                const currentToken = localStorage.getItem(CONFIG.storage.videoToken);
+                                if (currentToken !== lessonData.token) {
+                                    originalSetItem.call(localStorage, CONFIG.storage.videoToken, lessonData.token);
+                                    UI.showToast('🎬 Токен видео обновлен!', 'success');
                                 }
                             }
                         }
-                    }
-                } catch (e) { }
+                    } catch (e) {}
+                }
+                originalSetItem.apply(this, arguments);
+            };
+        }
+        async processLessonData(data) {
+            const currentId = window.location.href.match(/lessons\/(\d+)/)?.[1];
+            if (String(data.id) !== String(currentId)) return;
+            if (data.isWatched) {
+                console.log("✅ Урок уже пройден");
+                UI.markHeaderSuccess();
+            } else {
+                const duration = data.videoDurationEn || data.videoDurationKz || data.videoDurationRu || 100;
+                await this.sendWatchedRequest(data.id, duration);
             }
-            originalSetItem.call(this, key, value);
+        }
+        async sendWatchedRequest(lessonId, duration) {
+            const authToken = JSON.parse(localStorage.getItem(CONFIG.storage.auth) || '{}')?.token;
+            const xsrfToken = await Utils.getCookie('XSRF-Token');
+            const videoToken = localStorage.getItem(CONFIG.storage.videoToken);
+            if (!authToken || !xsrfToken || !videoToken) {
+                if (!videoToken) UI.showToast('⚠️ Посмотрите видео 1 раз вручную!', 'warn');
+                return;
+            }
+            try {
+                const res = await fetch(`${CONFIG.api.base}/lessons/${lessonId}/watched`, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json', 'authorization': `Bearer ${authToken}`, 'X-XSRF-TOKEN': xsrfToken },
+                    body: JSON.stringify({ token: videoToken, videoDuration: Math.floor(duration), videoWatched: Math.floor(duration) })
+                });
+                if (res.ok) {
+                    UI.showToast('🎉 Урок отмечен пройденным!');
+                    UI.markHeaderSuccess();
+                    setTimeout(() => window.location.reload(), 800);
+                }
+            } catch (e) { console.error('Ошибка отметки видео:', e); }
+        }
+    }
+
+    class QuizManager {
+        constructor() {
+            this.cache = GM_getValue(CONFIG.storage.quizCache, {});
+            this.initObserver();
+        }
+
+        processQuizData(data) {
+            let count = 0;
+            const itemsToProcess = [];
+
+            if (data.questionsWithCorrectAnswers && Array.isArray(data.questionsWithCorrectAnswers)) {
+                console.log('[Uni-X] Тест сдан успешно.');
+                return;
+            }
+            else if (data.history && Array.isArray(data.history)) {
+                console.log('[Uni-X] ⚠️ Тест не сдан. Сохраняем ответы для пересдачи.');
+                data.history.forEach(q => {
+                    if (q.answers && Array.isArray(q.answers)) {
+                        const correct = q.answers.filter(a => a.isCorrect);
+                        if (correct.length > 0) {
+                            itemsToProcess.push({
+                                question: q.questionText || q.questionTextRu || q.questionTextKz,
+                                correctAnswers: correct.map(a => a.answerText || a.answerTextRu || a.answerTextKz)
+                            });
+                        }
+                    } else if (q.correctAnswerText && q.questionText) {
+                        itemsToProcess.push({
+                            question: q.questionText,
+                            correctAnswers: [q.correctAnswerText]
+                        });
+                    }
+                });
+            }
+
+            if (itemsToProcess.length === 0) return;
+
+            itemsToProcess.forEach(item => {
+                const normQ = Utils.normalizeText(item.question).replace(/^\d+\.\s*/, '');
+                if (!normQ) return;
+                const validAnswers = item.correctAnswers.map(Utils.normalizeText).filter(Boolean);
+                if (validAnswers.length > 0 && !this.cache[normQ]) {
+                    this.cache[normQ] = validAnswers;
+                    count++;
+                }
+            });
+
+            if (count > 0) {
+                GM_setValue(CONFIG.storage.quizCache, this.cache);
+                UI.showToast(`🧠 Запомнил правильных ответов: ${count}`);
+                this.highlightAnswers();
+            }
+        }
+
+        highlightAnswers() {
+            const questions = document.querySelectorAll(CONFIG.selectors.questionText);
+            if (!questions.length) return;
+            for (const qEl of questions) {
+                const qText = Utils.normalizeText(qEl.innerText).replace(/^\d+\.\s*/, '');
+                const answers = this.cache[qText];
+                if (answers) {
+                    const container = qEl.closest('.bg-white') || qEl.parentElement.parentElement;
+                    if (!container) continue;
+                    const answerDivs = container.querySelectorAll(CONFIG.selectors.answerContainer);
+                    for (const ansDiv of answerDivs) {
+                        if (ansDiv.classList.contains('unix-correct-highlight')) continue;
+                        const textEl = ansDiv.querySelector(CONFIG.selectors.answerText) || ansDiv;
+                        const text = Utils.normalizeText(textEl.innerText);
+                        if (answers.includes(text)) {
+                            ansDiv.classList.add('unix-correct-highlight');
+                        }
+                    }
+                }
+            }
+        }
+
+        initObserver() {
+            const observer = new MutationObserver((mutations) => {
+                let shouldUpdate = false;
+                for (const m of mutations) {
+                    if (m.type === 'childList' && m.addedNodes.length > 0) {
+                        shouldUpdate = true;
+                        break;
+                    }
+                }
+                if (shouldUpdate) {
+                    this.highlightAnswers();
+                }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+    }
+
+    class Tools {
+        constructor() { this.hackActiveTab(); this.initClickToCopy(); }
+        hackActiveTab() {
+            const stop = e => { e.stopImmediatePropagation(); e.stopPropagation(); };
+            ['blur', 'visibilitychange', 'webkitvisibilitychange'].forEach(e => {
+                window.addEventListener(e, stop, true);
+                document.addEventListener(e, stop, true);
+            });
+            try {
+                Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+                Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+            } catch (e) {}
+        }
+        initClickToCopy() {
+            let activeEl = null;
+            document.body.addEventListener('mouseover', e => {
+                const target = e.target.closest(CONFIG.selectors.copyBlock);
+                if (activeEl && activeEl !== target) {
+                    activeEl.classList.remove('copy-highlight-clickable');
+                    activeEl = null;
+                }
+                if (target && !e.target.closest(CONFIG.selectors.excludeCopy)) {
+                    target.classList.add('copy-highlight-clickable');
+                    activeEl = target;
+                }
+            });
+            document.body.addEventListener('click', e => {
+                if (activeEl && activeEl.contains(e.target) && !e.target.closest(CONFIG.selectors.excludeCopy)) {
+                    e.preventDefault(); e.stopPropagation();
+                    const q = activeEl.querySelector(CONFIG.selectors.questionText)?.innerText || '';
+                    const ans = Array.from(activeEl.querySelectorAll(CONFIG.selectors.answerContainer))
+                        .map(d => d.innerText.replace(/\s+/g, ' ').trim()).join('\n');
+                    GM_setClipboard(`${q}\n${ans}`.trim());
+                    UI.showToast('📋 Скопировано в буфер');
+                    activeEl.classList.remove('copy-highlight-clickable');
+                    activeEl = null;
+                }
+            }, true);
+        }
+    }
+
+    function setupSniffer(videoMgr, quizMgr) {
+        const handleResponse = (url, text) => {
+            try {
+                if (!url || !text) return;
+                if (CONFIG.api.lessonRegex.test(url) && !url.includes('/watched')) {
+                    videoMgr.processLessonData(JSON.parse(text));
+                }
+                if (CONFIG.api.quizCheckRegex.test(url)) {
+                    const data = JSON.parse(text);
+                    if (data) quizMgr.processQuizData(data);
+                }
+            } catch (e) { console.error('Sniffer Parse Error', e); }
+        };
+        const origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (_, url) {
+            this.addEventListener('load', () => handleResponse(url, this.responseText));
+            origOpen.apply(this, arguments);
+        };
+        const origFetch = window.fetch;
+        window.fetch = async (...args) => {
+            const res = await origFetch(...args);
+            const clone = res.clone();
+            clone.text().then(text => handleResponse(res.url, text)).catch(() => {});
+            return res;
         };
     }
 
-    function injectStyles() {
-        GM_addStyle(`
-            * { -webkit-user-select: text !important; -moz-user-select: text !important; user-select: text !important; }
-            .copy-highlight-clickable {
-                outline: 2px solid #50C878 !important;
-                outline-offset: 4px;
-                border-radius: 16px;
-                cursor: copy !important;
-                transition: outline 0.1s ease-in-out;
-            }
-            .unix-correct-highlight {
-                border: 2px solid #10b981 !important;
-                background-color: rgba(16, 185, 129, 0.15) !important;
-                position: relative;
-            }
-        `);
+    function init() {
+        console.log('🚀 [Uni-X Lite] Loaded');
+        UI.injectStyles();
+        const videoMgr = new VideoManager();
+        const quizMgr = new QuizManager();
+        new Tools();
+        setupSniffer(videoMgr, quizMgr);
     }
-
-    function showNotification(message, color = '#198754') {
-        const n = document.createElement('div');
-        n.textContent = message;
-        Object.assign(n.style, {
-            position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
-            backgroundColor: color, color: 'white', padding: '12px 24px', borderRadius: '8px',
-            zIndex: '100000', opacity: '0', transition: 'opacity 0.3s', fontSize: '16px', fontWeight: '500',
-            pointerEvents: 'none'
-        });
-        document.body.appendChild(n);
-        requestAnimationFrame(() => n.style.opacity = '1');
-        setTimeout(() => { n.style.opacity = '0'; setTimeout(() => n.remove(), 300); }, 2000);
-    }
-
-    function simulateActiveTab() {
-        ['blur', 'visibilitychange', 'webkitvisibilitychange'].forEach(evt => {
-            window.addEventListener(evt, e => e.stopImmediatePropagation(), true);
-        });
-        try { Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true }); } catch (e) { }
-        try { Object.defineProperty(document, 'hidden', { get: () => false, configurable: true }); } catch (e) { }
-    }
-
-    function setupClickToCopyBlock() {
-        const EXCLUDED_ZONES = 'p.select-none, div.cursor-pointer[class*="rounded-"], button, [role="button"]';
-        const HIGHLIGHT_CLASS = 'copy-highlight-clickable';
-
-        function findTargetContainer(target) {
-            if (!target || !target.closest) return null;
-            const el = target.closest('.rounded-b-xl.flex-col.bg-white, .rounded-b-xl.flex-col.dark\\:bg-\\[\\#1a1a1a\\]');
-            return el;
-        }
-
-        document.body.addEventListener('mouseover', event => {
-            const target = event.target;
-            const container = findTargetContainer(target);
-
-            document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach(el => {
-                if (el !== container) el.classList.remove(HIGHLIGHT_CLASS);
-            });
-
-            if (container) {
-                if (target.closest(EXCLUDED_ZONES)) {
-                    container.classList.remove(HIGHLIGHT_CLASS);
-                } else {
-                    container.classList.add(HIGHLIGHT_CLASS);
-                }
-            }
-        });
-
-        document.body.addEventListener('click', event => {
-            const target = event.target;
-            const container = findTargetContainer(target);
-
-            if (container && !target.closest(EXCLUDED_ZONES)) {
-                event.preventDefault();
-                event.stopPropagation();
-                let contentToCopy = '';
-                const questionElement = container.querySelector('p.select-none');
-                const answerElements = container.querySelectorAll('div.cursor-pointer[class*="rounded-"]');
-                if (questionElement) contentToCopy += questionElement.innerText.trim() + '\n\n';
-                if (answerElements) {
-                    answerElements.forEach(answer => {
-                        contentToCopy += answer.innerText.replace(/\s+/g, ' ').trim() + '\n';
-                    });
-                }
-                if (contentToCopy) {
-                    GM_setClipboard(contentToCopy.trim());
-                    showNotification('✅ Блок скопирован!');
-                    container.classList.remove(HIGHLIGHT_CLASS);
-                    setTimeout(() => container.classList.add(HIGHLIGHT_CLASS), 100);
-                }
-            }
-        }, true);
-    }
-
-    /************ Запуск ************/
-
-    setupTokenInterceptor();
-    simulateActiveTab();
-    injectStyles();
-    initQuizObserver();
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => setupClickToCopyBlock());
-    } else {
-        setupClickToCopyBlock();
-    }
-
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
 })();
