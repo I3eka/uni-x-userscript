@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools (with Quiz Helper)
 // @namespace    http://tampermonkey.net/
-// @version      3.6
+// @version      3.7
 // @description  Отмечает видео, копирует вопросы, кэширует правильные ответы и подсвечивает их.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -329,8 +329,14 @@
         const origFetch = window.fetch;
         window.fetch = async (...args) => {
             const res = await origFetch(...args);
-            const clone = res.clone();
-            clone.text().then(text => handleResponse(res.url, text)).catch(() => {});
+            const url = res.url;
+            const isLessonData = CONFIG.api.lessonRegex.test(url) && !url.includes('/watched');
+            const isQuizResult = CONFIG.api.quizCheckRegex.test(url);
+
+            if (isLessonData || isQuizResult) {
+                const clone = res.clone();
+                clone.text().then(text => handleResponse(url, text)).catch(() => {});
+            }
             return res;
         };
     }
