@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools (with Quiz Helper)
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  Отмечает видео, копирует вопросы, кэширует правильные ответы и подсвечивает их.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -31,6 +31,10 @@
             lessonRegex: /\/api\/lessons\/(\d+)/,
             quizCheckRegex: /\/api\/quizes\/.*\/check/
         },
+        events: {
+            LESSON_DATA_LOADED: 'lesson:data:loaded',
+            QUIZ_RESULT_LOADED: 'quiz:result:loaded'
+        },
         storage: {
             videoToken: 'uniXVideoWatchToken',
             videoState: 'unix-video-state',
@@ -53,8 +57,34 @@
     };
 
     // ==========================================
-    // 2. UTILITIES
+    // 2. UTILITIES & EVENT BUS
     // ==========================================
+    
+    class EventBus {
+        constructor() {
+            this.listeners = {};
+        }
+
+        on(event, callback) {
+            if (!this.listeners[event]) {
+                this.listeners[event] = [];
+            }
+            this.listeners[event].push(callback);
+        }
+
+        emit(event, data) {
+            if (this.listeners[event]) {
+                this.listeners[event].forEach(callback => {
+                    try {
+                        callback(data);
+                    } catch (e) {
+                        console.error(`[EventBus] Error in listener for ${event}:`, e);
+                    }
+                });
+            }
+        }
+    }
+
     const Utils = {
         parseJwt: (token) => {
             try {
@@ -118,7 +148,13 @@
     // 4. LOGIC MODULES
     // ==========================================
     class VideoManager {
-        constructor() { this.interceptStorage(); }
+        constructor(eventBus) { 
+            this.interceptStorage(); 
+            if (eventBus) {
+                eventBus.on(CONFIG.events.LESSON_DATA_LOADED, this.processLessonData.bind(this));
+            }
+        }
+
         interceptStorage() {
             const originalSetItem = localStorage.setItem;
             localStorage.setItem = function (key, value) {
@@ -141,6 +177,7 @@
                 originalSetItem.apply(this, arguments);
             };
         }
+
         async processLessonData(data) {
             const currentId = window.location.href.match(/lessons\/(\d+)/)?.[1];
             if (String(data.id) !== String(currentId)) return;
@@ -152,6 +189,7 @@
                 await this.sendWatchedRequest(data.id, duration);
             }
         }
+
         async sendWatchedRequest(lessonId, duration) {
             const authToken = JSON.parse(localStorage.getItem(CONFIG.storage.auth) || '{}')?.token;
             const xsrfToken = await Utils.getCookie('XSRF-Token');
@@ -176,9 +214,12 @@
     }
 
     class QuizManager {
-        constructor() {
+        constructor(eventBus) {
             this.cache = GM_getValue(CONFIG.storage.quizCache, {});
             this.initObserver();
+            if (eventBus) {
+                eventBus.on(CONFIG.events.QUIZ_RESULT_LOADED, this.processQuizData.bind(this));
+            }
         }
 
         processQuizData(data) {
@@ -308,24 +349,33 @@
         }
     }
 
-    function setupSniffer(videoMgr, quizMgr) {
+    // ==========================================
+    // 5. NETWORK SNIFFER
+    // ==========================================
+    function setupSniffer(eventBus) {
         const handleResponse = (url, text) => {
             try {
                 if (!url || !text) return;
                 if (CONFIG.api.lessonRegex.test(url) && !url.includes('/watched')) {
-                    videoMgr.processLessonData(JSON.parse(text));
+                    const data = JSON.parse(text);
+                    eventBus.emit(CONFIG.events.LESSON_DATA_LOADED, data);
                 }
+                
                 if (CONFIG.api.quizCheckRegex.test(url)) {
                     const data = JSON.parse(text);
-                    if (data) quizMgr.processQuizData(data);
+                    if (data) {
+                        eventBus.emit(CONFIG.events.QUIZ_RESULT_LOADED, data);
+                    }
                 }
             } catch (e) { console.error('Sniffer Parse Error', e); }
         };
+
         const origOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function (_, url) {
             this.addEventListener('load', () => handleResponse(url, this.responseText));
             origOpen.apply(this, arguments);
         };
+
         const origFetch = window.fetch;
         window.fetch = async (...args) => {
             const res = await origFetch(...args);
@@ -344,11 +394,13 @@
     function init() {
         console.log('🚀 [Uni-X Lite] Loaded');
         UI.injectStyles();
-        const videoMgr = new VideoManager();
-        const quizMgr = new QuizManager();
+        const eventBus = new EventBus();
+        new VideoManager(eventBus);
+        new QuizManager(eventBus);
         new Tools();
-        setupSniffer(videoMgr, quizMgr);
+        setupSniffer(eventBus);
     }
+
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 })();
