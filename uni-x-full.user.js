@@ -5,7 +5,7 @@
 // @description  Отмечает видео, копирует вопросы, кэширует правильные ответы и подсвечивает их.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
-// @icon         https://uni-x.almv.kz/favicon.ico
+// @icon         https://github.com/I3eka/uni-x-userscript/raw/main/public/logo.svg
 // @grant        GM_cookie
 // @grant        GM_setClipboard
 // @grant        GM_addStyle
