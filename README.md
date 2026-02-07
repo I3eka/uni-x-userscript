@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/logo.svg" alt="Uni-X Logo" width="300" />
+  <img src="public/logo.svg" alt="Uni-X Logo" width="90" />
 </p>
 
 <h1 align="center">Uni-X UserScript</h1>
