@@ -2,7 +2,7 @@
   <img src="public/logo.svg" alt="Uni-X Logo" width="300" />
 </p>
 
-<h1 align="center">Uni-X UserScript v3.0</h1>
+<h1 align="center">Uni-X UserScript</h1>
 
 [![JavaScript](https://img.shields.io/badge/JavaScript-ES6%2B-yellow.svg)](https://developer.mozilla.org/en-US/docs/Web/JavaScript)
 [![Tampermonkey](https://img.shields.io/badge/Manager-Tampermonkey_BETA-004838.svg)](https://www.tampermonkey.net/)
