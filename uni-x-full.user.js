@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools (Auto + Manual Fallback)
 // @namespace    http://tampermonkey.net/
-// @version      4.2
+// @version      4.3
 // @description  Отмечает видео (авто-генерация или ручной перехват), копирует вопросы, кэширует ответы.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -43,6 +43,11 @@
             videoState: 'unix-video-state',
             quizCache: 'uniX_Quiz_Answers_Cache',
             auth: 'user-store'
+        },
+        delays: {
+            reloadSuccess: 1000,
+            reloadError: 1500,
+            toastLife: 3000
         },
         selectors: {
             header: 'h1',
@@ -116,6 +121,7 @@
             });
         },
         normalizeText: (str) => str ? str.replace(/\s+/g, ' ').trim() : '',
+        sleep: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
         getAuthHeaders: async () => {
             try {
                 const authToken = JSON.parse(localStorage.getItem(CONFIG.storage.auth) || '{}')?.token;
@@ -149,13 +155,19 @@
                 fontSize: '14px', fontWeight: '600', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', pointerEvents: 'none'
             });
             document.body.appendChild(n);
-            requestAnimationFrame(() => { n.style.opacity = '1'; n.style.transform = 'translateX(-50%) translateY(0)'; });
+            
+            requestAnimationFrame(() => { 
+                n.style.opacity = '1'; 
+                n.style.transform = 'translateX(-50%) translateY(0)'; 
+            });
+
             setTimeout(() => {
                 if (n.parentNode) {
-                    n.style.opacity = '0'; n.style.transform = 'translateX(-50%) translateY(10px)';
-                    setTimeout(() => n.remove(), 300);
+                    n.style.opacity = '0'; 
+                    n.style.transform = 'translateX(-50%) translateY(10px)';
+                    n.addEventListener('transitionend', () => n.remove(), { once: true });
                 }
-            }, 3000);
+            }, CONFIG.delays.toastLife);
         },
         markHeaderSuccess: () => {
             const header = document.querySelector(CONFIG.selectors.header);
@@ -241,7 +253,7 @@
             localStorage.setItem = function (key, value) {
                 const result = originalSetItem.apply(this, arguments);
                 if (key === CONFIG.storage.videoState) {
-                    setTimeout(() => {
+                    queueMicrotask(() => {
                         try {
                             const state = JSON.parse(value);
                             const lessonData = Object.values(state)[0];
@@ -256,7 +268,7 @@
                                 }
                             }
                         } catch (e) { }
-                    }, 0);
+                    });
                 }
                 return result;
             };
@@ -296,11 +308,13 @@
                 if (res.ok) {
                     UI.showToast('🎉 Урок отмечен!');
                     UI.markHeaderSuccess();
-                    setTimeout(() => window.location.reload(), 800);
+                    await Utils.sleep(CONFIG.delays.reloadSuccess); 
+                    window.location.reload();
                 } else if (res.status === 400 || res.status === 401) {
                     localStorage.removeItem(CONFIG.storage.videoToken);
                     UI.showToast('♻️ Токен устарел, обновляю...', 'warn');
-                    setTimeout(() => window.location.reload(), 1500);
+                    await Utils.sleep(CONFIG.delays.reloadError);
+                    window.location.reload();
                 }
             } catch (e) { Logger.error('Ошибка отметки:', e); }
         }
