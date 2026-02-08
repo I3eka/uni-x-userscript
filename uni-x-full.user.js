@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools (Auto + Manual Fallback)
 // @namespace    http://tampermonkey.net/
-// @version      4.1
+// @version      4.2
 // @description  Отмечает видео (авто-генерация или ручной перехват), копирует вопросы, кэширует ответы.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -66,6 +66,12 @@
     // 2. UTILITIES & EVENT BUS
     // ==========================================
 
+    const Logger = {
+        log: (msg, ...args) => console.log(`%c[Uni-X] ℹ️ ${msg}`, 'color: #3b82f6', ...args),
+        success: (msg, ...args) => console.log(`%c[Uni-X] ✅ ${msg}`, 'color: #10b981', ...args),
+        error: (msg, ...args) => console.error(`%c[Uni-X] ❌ ${msg}`, 'color: #ef4444', ...args),
+    };
+
     class EventBus {
         constructor() {
             this.listeners = {};
@@ -84,7 +90,7 @@
                     try {
                         callback(data);
                     } catch (e) {
-                        console.error(`[EventBus] Error in listener for ${event}:`, e);
+                        Logger.error(`EventBus error (${event}):`, e);
                     }
                 });
             }
@@ -111,14 +117,16 @@
         },
         normalizeText: (str) => str ? str.replace(/\s+/g, ' ').trim() : '',
         getAuthHeaders: async () => {
-            const authToken = JSON.parse(localStorage.getItem(CONFIG.storage.auth) || '{}')?.token;
-            const xsrfToken = await Utils.getCookie('XSRF-Token');
-            if (!authToken || !xsrfToken) return null;
-            return {
-                'content-type': 'application/json',
-                'authorization': `Bearer ${authToken}`,
-                'X-XSRF-TOKEN': xsrfToken
-            };
+            try {
+                const authToken = JSON.parse(localStorage.getItem(CONFIG.storage.auth) || '{}')?.token;
+                const xsrfToken = await Utils.getCookie('XSRF-Token');
+                if (!authToken || !xsrfToken) return null;
+                return {
+                    'content-type': 'application/json',
+                    'authorization': `Bearer ${authToken}`,
+                    'X-XSRF-TOKEN': xsrfToken
+                };
+            } catch (e) { return null; }
         }
     };
 
@@ -127,8 +135,12 @@
     // ==========================================
     const UI = {
         showToast: (message, type = 'success') => {
+            const existing = document.getElementById('unix-toast');
+            if (existing) existing.remove();
+
             const color = CONFIG.ui.colors[type] || CONFIG.ui.colors.success;
             const n = document.createElement('div');
+            n.id = 'unix-toast';
             n.textContent = message;
             Object.assign(n.style, {
                 position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%) translateY(20px)',
@@ -139,35 +151,35 @@
             document.body.appendChild(n);
             requestAnimationFrame(() => { n.style.opacity = '1'; n.style.transform = 'translateX(-50%) translateY(0)'; });
             setTimeout(() => {
-                n.style.opacity = '0'; n.style.transform = 'translateX(-50%) translateY(10px)';
-                setTimeout(() => n.remove(), 300);
+                if (n.parentNode) {
+                    n.style.opacity = '0'; n.style.transform = 'translateX(-50%) translateY(10px)';
+                    setTimeout(() => n.remove(), 300);
+                }
             }, 3000);
         },
         markHeaderSuccess: () => {
             const header = document.querySelector(CONFIG.selectors.header);
             if (header) {
-                header.style.borderBottom = `5px solid ${CONFIG.ui.successColor}`;
+                header.style.borderBottom = `5px solid ${CONFIG.ui.colors.success}`;
                 header.style.transition = 'border-color 0.5s ease';
             }
         },
         injectStyles: () => {
-            const blockSelectors = CONFIG.selectors.copyBlock.split(',').map(s => s.trim());
-            const excludeHoverSelectors = CONFIG.selectors.excludeCopy.split(',')
-                .map(s => s.trim() + ':hover')
-                .join(', ');
-            const smartHoverRules = blockSelectors.map(block => {
-                return `${block}:hover:not(:has(${excludeHoverSelectors}))`;
-            }).join(',\n');
+            const { copyBlock, excludeCopy } = CONFIG.selectors;
+            const blockSelectors = copyBlock.split(',').map(s => s.trim());
+            const excludeHoverSelectors = excludeCopy.split(',').map(s => s.trim() + ':hover').join(', ');
+
+            const smartHoverRules = blockSelectors.map(block =>
+                `${block}:hover:not(:has(${excludeHoverSelectors}))`
+            ).join(',\n');
 
             GM_addStyle(`
                 * { -webkit-user-select: text !important; user-select: text !important; }
-                .unix-correct-highlight { border: 2px solid ${CONFIG.ui.successColor} !important; background-color: rgba(16, 185, 129, 0.1) !important; position: relative; }
+                .unix-correct-highlight { border: 2px solid ${CONFIG.ui.colors.success} !important; background-color: rgba(16, 185, 129, 0.1) !important; position: relative; }
                 .unix-correct-highlight::after { content: '✅'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 1.2rem; }
                 ${smartHoverRules} {
-                    outline: 2px solid ${CONFIG.ui.successColor} !important;
-                    outline-offset: 4px;
-                    border-radius: 12px;
-                    cursor: copy !important;
+                    outline: 2px solid ${CONFIG.ui.colors.success} !important;
+                    outline-offset: 4px; border-radius: 12px; cursor: copy !important;
                     background-color: rgba(16, 185, 129, 0.05);
                 }
                 ${CONFIG.selectors.excludeCopy} {
@@ -189,29 +201,28 @@
 
                 const lessonId = CONFIG.magicLesson.id;
                 const ts = new Date().toISOString();
+                const baseBody = { lessonId, currentSpeed: 1, clientTimestamp: ts, lang: "EN" };
 
                 const startRes = await fetch(`${CONFIG.api.base}/validates/watched`, {
-                    method: 'POST', headers,
-                    body: JSON.stringify({ event: "video-start", lessonId, currentSpeed: 1, clientTimestamp: ts, lang: "EN" })
+                    method: 'POST', headers, body: JSON.stringify({ ...baseBody, event: "video-start" })
                 });
                 if (!startRes.ok) throw new Error('Start failed');
                 const startData = await startRes.json();
                 if (!startData.token) throw new Error('No token in start');
 
                 const endRes = await fetch(`${CONFIG.api.base}/validates/watched`, {
-                    method: 'POST', headers,
-                    body: JSON.stringify({ event: "video-end", lessonId, currentSpeed: 1, clientTimestamp: ts, lang: "EN", token: startData.token })
+                    method: 'POST', headers, body: JSON.stringify({ ...baseBody, event: "video-end", token: startData.token })
                 });
                 const endData = await endRes.json();
 
                 if (endData.token) {
                     localStorage.setItem(CONFIG.storage.videoToken, endData.token);
-                    console.log('[TokenGen] Token generated and saved!');
+                    Logger.success('Token generated!');
                     return endData.token;
                 }
                 throw new Error('End failed');
             } catch (e) {
-                console.warn('[TokenGen] Auto-generation failed:', e);
+                Logger.error('Auto-generation failed:', e);
                 return null;
             }
         }
@@ -228,31 +239,33 @@
         interceptStorage() {
             const originalSetItem = localStorage.setItem;
             localStorage.setItem = function (key, value) {
+                const result = originalSetItem.apply(this, arguments);
                 if (key === CONFIG.storage.videoState) {
-                    try {
-                        const state = JSON.parse(value);
-                        const lessonData = Object.values(state)[0];
-                        if (lessonData?.token && typeof lessonData.lastWatchedTime === 'number') {
-                            const payload = Utils.parseJwt(lessonData.token);
-                            if (payload && lessonData.lastWatchedTime >= payload.videoDuration) {
-                                const currentToken = localStorage.getItem(CONFIG.storage.videoToken);
-                                if (currentToken !== lessonData.token) {
-                                    originalSetItem.call(localStorage, CONFIG.storage.videoToken, lessonData.token);
-                                    UI.showToast('🎬 Токен видео обновлен!', 'success');
+                    setTimeout(() => {
+                        try {
+                            const state = JSON.parse(value);
+                            const lessonData = Object.values(state)[0];
+                            if (lessonData?.token && typeof lessonData.lastWatchedTime === 'number') {
+                                const payload = Utils.parseJwt(lessonData.token);
+                                if (payload && lessonData.lastWatchedTime >= payload.videoDuration) {
+                                    const currentToken = localStorage.getItem(CONFIG.storage.videoToken);
+                                    if (currentToken !== lessonData.token) {
+                                        originalSetItem.call(localStorage, CONFIG.storage.videoToken, lessonData.token);
+                                        UI.showToast('🎬 Токен обновлен из плеера!', 'info');
+                                    }
                                 }
                             }
-                        }
-                    } catch (e) { }
+                        } catch (e) { }
+                    }, 0);
                 }
-                originalSetItem.apply(this, arguments);
+                return result;
             };
         }
-
         async processLessonData(data) {
             const currentId = window.location.href.match(/lessons\/(\d+)/)?.[1];
             if (String(data.id) !== String(currentId)) return;
             if (data.isWatched) {
-                console.log("✅ Урок уже пройден");
+                Logger.success("Урок уже пройден");
                 UI.markHeaderSuccess();
             } else {
                 let token = localStorage.getItem(CONFIG.storage.videoToken);
@@ -265,7 +278,7 @@
                     const duration = data.videoDurationEn || data.videoDurationKz || data.videoDurationRu || 100;
                     await this.sendWatchedRequest({ lessonId: data.id, duration, token });
                 } else {
-                    UI.showToast('⚠️ Авто-токен не сработал. Посмотрите видео 1 раз вручную!', 'warn');
+                    UI.showToast('⚠️ Посмотрите видео вручную (токен не найден)', 'warn');
                 }
             }
         }
@@ -281,17 +294,15 @@
                     body: JSON.stringify({ token: token, videoDuration: Math.floor(duration), videoWatched: Math.floor(duration) })
                 });
                 if (res.ok) {
-                    UI.showToast('🎉 Урок отмечен пройденным!');
+                    UI.showToast('🎉 Урок отмечен!');
                     UI.markHeaderSuccess();
                     setTimeout(() => window.location.reload(), 800);
-                } else {
-                    if (res.status === 400 || res.status === 401) {
-                        localStorage.removeItem(CONFIG.storage.videoToken);
-                        UI.showToast('♻️ Токен устарел, обновляю страницу...', 'warn');
-                        setTimeout(() => window.location.reload(), 1500);
-                    }
+                } else if (res.status === 400 || res.status === 401) {
+                    localStorage.removeItem(CONFIG.storage.videoToken);
+                    UI.showToast('♻️ Токен устарел, обновляю...', 'warn');
+                    setTimeout(() => window.location.reload(), 1500);
                 }
-            } catch (e) { console.error('Ошибка отметки видео:', e); }
+            } catch (e) { Logger.error('Ошибка отметки:', e); }
         }
     }
 
@@ -308,16 +319,16 @@
             let count = 0;
             const itemsToProcess = [];
 
-            if (data.questionsWithCorrectAnswers && Array.isArray(data.questionsWithCorrectAnswers)) {
-                console.log('[Uni-X] Тест сдан успешно.');
+            if (data.questionsWithCorrectAnswers?.length) {
+                Logger.success('Тест сдан успешно.');
                 return;
             }
-            else if (data.history && Array.isArray(data.history)) {
-                console.log('[Uni-X] ⚠️ Тест не сдан. Сохраняем ответы для пересдачи.');
+            else if (data.history?.length) {
+                Logger.log('Сохраняем ответы из истории.');
                 data.history.forEach(q => {
-                    if (q.answers && Array.isArray(q.answers)) {
+                    if (q.answers?.length) {
                         const correct = q.answers.filter(a => a.isCorrect);
-                        if (correct.length > 0) {
+                        if (correct.length) {
                             itemsToProcess.push({
                                 question: q.questionText || q.questionTextRu || q.questionTextKz,
                                 correctAnswers: correct.map(a => a.answerText || a.answerTextRu || a.answerTextKz)
@@ -332,13 +343,11 @@
                 });
             }
 
-            if (itemsToProcess.length === 0) return;
-
             itemsToProcess.forEach(item => {
                 const normQ = Utils.normalizeText(item.question).replace(/^\d+\.\s*/, '');
                 if (!normQ) return;
                 const validAnswers = item.correctAnswers.map(Utils.normalizeText).filter(Boolean);
-                if (validAnswers.length > 0 && !this.cache[normQ]) {
+                if (validAnswers.length && !this.cache[normQ]) {
                     this.cache[normQ] = validAnswers;
                     count++;
                 }
@@ -346,38 +355,38 @@
 
             if (count > 0) {
                 GM_setValue(CONFIG.storage.quizCache, this.cache);
-                UI.showToast(`🧠 Запомнил правильных ответов: ${count}`);
+                UI.showToast(`🧠 Сохранено ответов: ${count}`);
                 this.highlightAnswers();
             }
         }
 
         highlightAnswers() {
             const questions = document.querySelectorAll(CONFIG.selectors.questionText);
-            if (!questions.length) return;
-            for (const qEl of questions) {
+            questions.forEach(qEl => {
                 const qText = Utils.normalizeText(qEl.innerText).replace(/^\d+\.\s*/, '');
                 const answers = this.cache[qText];
                 if (answers) {
-                    const container = qEl.closest('.bg-white') || qEl.parentElement.parentElement;
-                    if (!container) continue;
+                    const container = qEl.closest('.bg-white') || qEl.parentElement?.parentElement;
+                    if (!container) return;
+
                     const answerDivs = container.querySelectorAll(CONFIG.selectors.answerContainer);
-                    for (const ansDiv of answerDivs) {
-                        if (ansDiv.classList.contains('unix-correct-highlight')) continue;
+                    answerDivs.forEach(ansDiv => {
+                        if (ansDiv.classList.contains('unix-correct-highlight')) return;
                         const textEl = ansDiv.querySelector(CONFIG.selectors.answerText) || ansDiv;
                         const text = Utils.normalizeText(textEl.innerText);
                         if (answers.includes(text)) {
                             ansDiv.classList.add('unix-correct-highlight');
                         }
-                    }
+                    });
                 }
-            }
+            });
         }
 
         initObserver() {
             const observer = new MutationObserver((mutations) => {
                 let shouldUpdate = false;
                 for (const m of mutations) {
-                    if (m.type === 'childList' && m.addedNodes.length > 0) {
+                    if (m.addedNodes.length > 0 && m.addedNodes[0].nodeType === 1) {
                         shouldUpdate = true;
                         break;
                     }
@@ -390,33 +399,42 @@
         }
     }
 
-    class Tools {
-        constructor() { this.hackActiveTab(); this.initClickToCopy(); }
+    class SystemTools {
+        constructor() { this.hackActiveTab(); }
         hackActiveTab() {
             const stop = e => { e.stopImmediatePropagation(); e.stopPropagation(); };
-            ['blur', 'visibilitychange', 'webkitvisibilitychange'].forEach(e => {
+            ['blur', 'visibilitychange', 'webkitvisibilitychange', 'mozvisibilitychange', 'msvisibilitychange'].forEach(e => {
                 window.addEventListener(e, stop, true);
                 document.addEventListener(e, stop, true);
             });
             try {
                 Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
                 Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
-            } catch (e) { }
+            } catch (e) { Logger.error('Visibility hack error:', e); }
         }
+    }
+
+    class ClipboardTools {
+        constructor() { this.initClickToCopy(); }
         initClickToCopy() {
             document.body.addEventListener('click', e => {
+                if (window.getSelection().toString().length > 0) return;
                 const targetBlock = e.target.closest(CONFIG.selectors.copyBlock);
-                if (targetBlock && !e.target.closest(CONFIG.selectors.excludeCopy)) {
+                const isExcluded = e.target.closest(CONFIG.selectors.excludeCopy);
+                if (targetBlock && !isExcluded) {
                     e.preventDefault();
-                    e.stopPropagation();
+                    e.stopImmediatePropagation();
                     const q = targetBlock.querySelector(CONFIG.selectors.questionText)?.innerText || '';
                     const ans = Array.from(targetBlock.querySelectorAll(CONFIG.selectors.answerContainer))
                         .map(d => d.innerText.replace(/\s+/g, ' ').trim()).join('\n');
-                    GM_setClipboard(`${q}\n${ans}`.trim());
-                    UI.showToast('📋 Скопировано в буфер');
-                    const originalOutline = targetBlock.style.outline;
-                    targetBlock.style.outline = `4px solid ${CONFIG.ui.successColor}`;
-                    setTimeout(() => { targetBlock.style.outline = originalOutline; }, 200);
+
+                    if (q || ans) {
+                        GM_setClipboard(`${q}\n${ans}`.trim());
+                        UI.showToast('📋 Скопировано!');
+                        const originalOutline = targetBlock.style.outline;
+                        targetBlock.style.outline = `4px solid ${CONFIG.ui.colors.success}`;
+                        setTimeout(() => { targetBlock.style.outline = originalOutline; }, 200);
+                    }
                 }
             }, true);
         }
@@ -428,50 +446,57 @@
     function setupSniffer(eventBus) {
         const handleResponse = (url, text) => {
             try {
-                if (!url || !text) return;
-                if (url.includes(CONFIG.magicLesson.id)) return;
-                if (CONFIG.api.lessonRegex.test(url) && !url.includes('/watched')) {
-                    const data = JSON.parse(text);
-                    eventBus.emit(CONFIG.events.LESSON_DATA_LOADED, data);
-                }
+                if (!url || !text || url.includes(CONFIG.magicLesson.id)) return;
 
-                if (CONFIG.api.quizCheckRegex.test(url)) {
-                    const data = JSON.parse(text);
-                    if (data) {
-                        eventBus.emit(CONFIG.events.QUIZ_RESULT_LOADED, data);
-                    }
+                if (CONFIG.api.lessonRegex.test(url) && !url.includes('/watched')) {
+                    eventBus.emit(CONFIG.events.LESSON_DATA_LOADED, JSON.parse(text));
                 }
-            } catch (e) { console.error('Sniffer Parse Error', e); }
+                else if (CONFIG.api.quizCheckRegex.test(url)) {
+                    eventBus.emit(CONFIG.events.QUIZ_RESULT_LOADED, JSON.parse(text));
+                }
+            } catch (e) { Logger.error('Response handling error:', e); }
         };
 
         const origOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function (_, url) {
-            this.addEventListener('load', () => handleResponse(url, this.responseText));
-            origOpen.apply(this, arguments);
+            if (!this._unix_patched) {
+                this.addEventListener('load', function () {
+                    handleResponse(url, this.responseText);
+                });
+                this._unix_patched = true;
+            }
+            return origOpen.apply(this, arguments);
         };
 
         const origFetch = window.fetch;
         window.fetch = async (...args) => {
             const res = await origFetch(...args);
-            const url = res.url;
-            const isLessonData = CONFIG.api.lessonRegex.test(url) && !url.includes('/watched');
-            const isQuizResult = CONFIG.api.quizCheckRegex.test(url);
+            try {
+                const url = res.url;
+                const isLesson = CONFIG.api.lessonRegex.test(url) && !url.includes('/watched');
+                const isQuiz = CONFIG.api.quizCheckRegex.test(url);
 
-            if (isLessonData || isQuizResult) {
-                const clone = res.clone();
-                clone.text().then(text => handleResponse(url, text)).catch(() => { });
+                if (isLesson || isQuiz) {
+                    const clone = res.clone();
+                    clone.text()
+                        .then(text => handleResponse(url, text))
+                        .catch(e => Logger.error('Fetch clone error:', e));
+                }
+            } catch (e) {
+                Logger.error('Sniffer logic error:', e);
             }
             return res;
         };
     }
 
     function init() {
-        console.log('🚀 [Uni-X] Loaded');
+        Logger.log('🚀 [Uni-X] Loaded');
         UI.injectStyles();
         const eventBus = new EventBus();
         new VideoManager(eventBus);
         new QuizManager(eventBus);
-        new Tools();
+        new SystemTools();
+        new ClipboardTools();
         setupSniffer(eventBus);
     }
 
