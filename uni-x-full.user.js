@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Mark Video Watched & Tools (with Quiz Helper)
+// @name         Mark Video Watched & Tools (Auto + Manual Fallback)
 // @namespace    http://tampermonkey.net/
-// @version      3.9
-// @description  Отмечает видео, копирует вопросы, кэширует правильные ответы и подсвечивает их.
+// @version      4.0
+// @description  Отмечает видео (авто-генерация или ручной перехват), копирует вопросы, кэширует ответы.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
 // @icon         https://github.com/I3eka/uni-x-userscript/raw/main/public/logo.svg
@@ -31,6 +31,9 @@
             lessonRegex: /\/api\/lessons\/(\d+)/,
             quizCheckRegex: /\/api\/quizes\/.*\/check/
         },
+        magicLesson: {
+            id: 15379 // Урок для генерации токена
+        },
         events: {
             LESSON_DATA_LOADED: 'lesson:data:loaded',
             QUIZ_RESULT_LOADED: 'quiz:result:loaded'
@@ -50,9 +53,12 @@
             excludeCopy: 'p.select-none, div.cursor-pointer[class*="rounded-"], button, [role="button"]'
         },
         ui: {
-            successColor: '#10b981',
-            errorColor: '#ef4444',
-            warnColor: '#f59e0b'
+            colors: {
+                success: '#10b981',
+                error: '#ef4444',
+                warn: '#f59e0b',
+                info: '#3b82f6'
+            }
         }
     };
 
@@ -103,7 +109,17 @@
                 } else resolve(null);
             });
         },
-        normalizeText: (str) => str ? str.replace(/\s+/g, ' ').trim() : ''
+        normalizeText: (str) => str ? str.replace(/\s+/g, ' ').trim() : '',
+        getAuthHeaders: async () => {
+            const authToken = JSON.parse(localStorage.getItem(CONFIG.storage.auth) || '{}')?.token;
+            const xsrfToken = await Utils.getCookie('XSRF-Token');
+            if (!authToken || !xsrfToken) return null;
+            return {
+                'content-type': 'application/json',
+                'authorization': `Bearer ${authToken}`,
+                'X-XSRF-TOKEN': xsrfToken
+            };
+        }
     };
 
     // ==========================================
@@ -111,7 +127,7 @@
     // ==========================================
     const UI = {
         showToast: (message, type = 'success') => {
-            const color = type === 'error' ? CONFIG.ui.errorColor : (type === 'warn' ? CONFIG.ui.warnColor : CONFIG.ui.successColor);
+            const color = CONFIG.ui.colors[type] || CONFIG.ui.colors.success;
             const n = document.createElement('div');
             n.textContent = message;
             Object.assign(n.style, {
@@ -164,6 +180,43 @@
     // ==========================================
     // 4. LOGIC MODULES
     // ==========================================
+    class TokenGenerator {
+        static async generate() {
+            UI.showToast('🔄 Генерирую универсальный токен...', 'info');
+            try {
+                const headers = await Utils.getAuthHeaders();
+                if (!headers) throw new Error('No Auth headers');
+
+                const lessonId = CONFIG.magicLesson.id;
+                const ts = new Date().toISOString();
+
+                const startRes = await fetch(`${CONFIG.api.base}/validates/watched`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify({ event: "video-start", lessonId, currentSpeed: 1, clientTimestamp: ts, lang: "EN" })
+                });
+                if (!startRes.ok) throw new Error('Start failed');
+                const startData = await startRes.json();
+                if (!startData.token) throw new Error('No token in start');
+
+                const endRes = await fetch(`${CONFIG.api.base}/validates/watched`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify({ event: "video-end", lessonId, currentSpeed: 1, clientTimestamp: ts, lang: "EN", token: startData.token })
+                });
+                const endData = await endRes.json();
+
+                if (endData.token) {
+                    localStorage.setItem(CONFIG.storage.videoToken, endData.token);
+                    console.log('[TokenGen] Token generated and saved!');
+                    return endData.token;
+                }
+                throw new Error('End failed');
+            } catch (e) {
+                console.warn('[TokenGen] Auto-generation failed:', e);
+                return null;
+            }
+        }
+    }
+
     class VideoManager {
         constructor(eventBus) {
             this.interceptStorage();
@@ -189,7 +242,7 @@
                                 }
                             }
                         }
-                    } catch (e) {}
+                    } catch (e) { }
                 }
                 originalSetItem.apply(this, arguments);
             };
@@ -202,29 +255,41 @@
                 console.log("✅ Урок уже пройден");
                 UI.markHeaderSuccess();
             } else {
-                const duration = data.videoDurationEn || data.videoDurationKz || data.videoDurationRu || 100;
-                await this.sendWatchedRequest(data.id, duration);
+                let token = localStorage.getItem(CONFIG.storage.videoToken);
+
+                if (!token) {
+                    token = await TokenGenerator.generate();
+                }
+
+                if (token) {
+                    const duration = data.videoDurationEn || data.videoDurationKz || data.videoDurationRu || 100;
+                    await this.sendWatchedRequest(data.id, duration, token);
+                } else {
+                    UI.showToast('⚠️ Авто-токен не сработал. Посмотрите видео 1 раз вручную!', 'warn');
+                }
             }
         }
 
-        async sendWatchedRequest(lessonId, duration) {
-            const authToken = JSON.parse(localStorage.getItem(CONFIG.storage.auth) || '{}')?.token;
-            const xsrfToken = await Utils.getCookie('XSRF-Token');
-            const videoToken = localStorage.getItem(CONFIG.storage.videoToken);
-            if (!authToken || !xsrfToken || !videoToken) {
-                if (!videoToken) UI.showToast('⚠️ Посмотрите видео 1 раз вручную!', 'warn');
-                return;
-            }
+        async sendWatchedRequest(lessonId, duration, token) {
+            const headers = await Utils.getAuthHeaders();
+            if (!headers) return;
+
             try {
                 const res = await fetch(`${CONFIG.api.base}/lessons/${lessonId}/watched`, {
                     method: 'POST',
-                    headers: { 'content-type': 'application/json', 'authorization': `Bearer ${authToken}`, 'X-XSRF-TOKEN': xsrfToken },
-                    body: JSON.stringify({ token: videoToken, videoDuration: Math.floor(duration), videoWatched: Math.floor(duration) })
+                    headers: headers,
+                    body: JSON.stringify({ token: token, videoDuration: Math.floor(duration), videoWatched: Math.floor(duration) })
                 });
                 if (res.ok) {
                     UI.showToast('🎉 Урок отмечен пройденным!');
                     UI.markHeaderSuccess();
                     setTimeout(() => window.location.reload(), 800);
+                } else {
+                    if (res.status === 400 || res.status === 401) {
+                        localStorage.removeItem(CONFIG.storage.videoToken);
+                        UI.showToast('♻️ Токен устарел, обновляю страницу...', 'warn');
+                        setTimeout(() => window.location.reload(), 1500);
+                    }
                 }
             } catch (e) { console.error('Ошибка отметки видео:', e); }
         }
@@ -336,7 +401,7 @@
             try {
                 Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
                 Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
-            } catch (e) {}
+            } catch (e) { }
         }
         initClickToCopy() {
             document.body.addEventListener('click', e => {
@@ -364,6 +429,7 @@
         const handleResponse = (url, text) => {
             try {
                 if (!url || !text) return;
+                if (url.includes(CONFIG.magicLesson.id)) return;
                 if (CONFIG.api.lessonRegex.test(url) && !url.includes('/watched')) {
                     const data = JSON.parse(text);
                     eventBus.emit(CONFIG.events.LESSON_DATA_LOADED, data);
@@ -393,14 +459,14 @@
 
             if (isLessonData || isQuizResult) {
                 const clone = res.clone();
-                clone.text().then(text => handleResponse(url, text)).catch(() => {});
+                clone.text().then(text => handleResponse(url, text)).catch(() => { });
             }
             return res;
         };
     }
 
     function init() {
-        console.log('🚀 [Uni-X Lite] Loaded');
+        console.log('🚀 [Uni-X] Loaded');
         UI.injectStyles();
         const eventBus = new EventBus();
         new VideoManager(eventBus);
