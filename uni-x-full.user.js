@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mark Video Watched & Tools (Auto + Manual Fallback)
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  Отмечает видео (авто-генерация или ручной перехват), копирует вопросы, кэширует ответы.
 // @author       I3eka
 // @match        https://uni-x.almv.kz/*
@@ -263,14 +263,14 @@
 
                 if (token) {
                     const duration = data.videoDurationEn || data.videoDurationKz || data.videoDurationRu || 100;
-                    await this.sendWatchedRequest(data.id, duration, token);
+                    await this.sendWatchedRequest({ lessonId: data.id, duration, token });
                 } else {
                     UI.showToast('⚠️ Авто-токен не сработал. Посмотрите видео 1 раз вручную!', 'warn');
                 }
             }
         }
 
-        async sendWatchedRequest(lessonId, duration, token) {
+        async sendWatchedRequest({ lessonId, duration, token }) {
             const headers = await Utils.getAuthHeaders();
             if (!headers) return;
 
