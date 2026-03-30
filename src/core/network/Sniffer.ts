@@ -35,7 +35,7 @@ export class Sniffer {
   private handleResponse(url: string, text: string): void {
     try {
       // Ignore our own magic-lesson requests to avoid feedback loops.
-      if (!url || !text || url.includes(String(CONFIG.magicLesson.id))) return;
+      if (!url || !text || url.includes('/validates/watched')) return;
 
       if (CONFIG.api.lessonInfoRegex.test(url)) {
         this.eventBus.emit(
