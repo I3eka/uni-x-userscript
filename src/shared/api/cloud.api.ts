@@ -48,6 +48,7 @@ export async function saveCloudAnswers(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      keepalive: true, // Survive page navigations (quiz submit → redirect)
     });
     if (res.ok) {
       Logger.success('New answers uploaded to cloud');
