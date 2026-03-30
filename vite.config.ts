@@ -27,9 +27,9 @@ export default defineConfig({
         homepageURL: 'https://github.com/I3eka/uni-x-userscript',
         supportURL: 'https://github.com/I3eka/uni-x-userscript/issues',
         downloadURL:
-          'https://github.com/I3eka/uni-x-userscript/raw/main/uni-x-full.user.js',
+          'https://github.com/I3eka/uni-x-userscript/releases/latest/download/uni-x.user.js',
         updateURL:
-          'https://github.com/I3eka/uni-x-userscript/raw/main/uni-x-full.user.js',
+          'https://github.com/I3eka/uni-x-userscript/releases/latest/download/uni-x.user.js',
         'run-at': 'document-start',
       },
       build: {
