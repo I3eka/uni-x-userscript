@@ -1,14 +1,14 @@
 import { defineConfig } from 'vite';
 import monkey from 'vite-plugin-monkey';
-import { resolve } from 'path';
+import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   resolve: {
     alias: {
-      '@shared': resolve(__dirname, 'src/shared'),
-      '@core': resolve(__dirname, 'src/core'),
-      '@features': resolve(__dirname, 'src/features'),
-      '@app': resolve(__dirname, 'src/app'),
+      '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
+      '@core': fileURLToPath(new URL('./src/core', import.meta.url)),
+      '@features': fileURLToPath(new URL('./src/features', import.meta.url)),
+      '@app': fileURLToPath(new URL('./src/app', import.meta.url)),
     },
   },
   plugins: [
