@@ -26,6 +26,7 @@ export async function fetchCloudAnswers(
     if (res.ok) {
       return (await res.json()) as CloudAnswersMap;
     }
+    Logger.error(`Cloud fetch failed: ${res.status}`);
   } catch (e) {
     Logger.error('Cloud fetch error', e);
   }
