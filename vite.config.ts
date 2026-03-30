@@ -17,7 +17,7 @@ export default defineConfig({
       userscript: {
         name: 'Mark Video Watched & Tools (Auto + Manual Fallback)',
         namespace: 'http://tampermonkey.net/',
-        version: '5.0',
+        version: '5.0.0',
         description:
           'Отмечает видео (авто-генерация или ручной перехват), копирует вопросы, кэширует ответы.',
         author: 'I3eka',
