@@ -21,7 +21,7 @@ export async function fetchCloudAnswers(
 
   try {
     const res = await fetch(
-      `${CONFIG.cloud.apiUrl}/api/get?keys=${keys.join(',')}`,
+      `${CONFIG.cloud.apiUrl}/api/get?keys=${encodeURIComponent(keys.join(','))}`,
     );
     if (res.ok) {
       return (await res.json()) as CloudAnswersMap;
