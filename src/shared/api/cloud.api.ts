@@ -43,12 +43,16 @@ export async function saveCloudAnswers(
   if (Object.keys(payload).length === 0) return;
 
   try {
-    await fetch(`${CONFIG.cloud.apiUrl}/api/save`, {
+    const res = await fetch(`${CONFIG.cloud.apiUrl}/api/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    Logger.success('New answers uploaded to cloud');
+    if (res.ok) {
+      Logger.success('New answers uploaded to cloud');
+    } else {
+      Logger.error(`Cloud save failed: ${res.status}`);
+    }
   } catch (e) {
     Logger.error('Cloud save error', e);
   }
