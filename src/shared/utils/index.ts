@@ -1,5 +1,5 @@
 /**
- * Pure utility functions — no side effects, no imports from other layers.
+ * Shared utility helpers — lightweight functions used across features.
  */
 
 import { CONFIG } from '@shared/config';
