@@ -40,7 +40,7 @@ interface QuizAnswer {
   isCorrect?: boolean;
 }
 
-interface QuizHistoryItem {
+export interface QuizHistoryItem {
   questionText?: string;
   questionTextRu?: string;
   questionTextKz?: string;
@@ -49,7 +49,7 @@ interface QuizHistoryItem {
 }
 
 export interface QuizResultData {
-  questionsWithCorrectAnswers?: QuizAnswer[];
+  questionsWithCorrectAnswers?: QuizHistoryItem[];
   history?: QuizHistoryItem[];
   [key: string]: unknown;
 }
