@@ -127,13 +127,12 @@ export class VideoMarkerPlugin implements IPlugin {
     const currentId = window.location.href.match(/lessons\/(\d+)/)?.[1];
     if (String(data.id) !== String(currentId)) return;
 
-    // Idempotency: skip if we already handled this lesson in this page lifecycle.
-    // Prevents double processing when both proactiveFetch and Sniffer fire.
+    // Idempotency: skip if we already successfully handled this lesson.
     const key = String(data.id);
     if (this.processedIds.has(key)) return;
-    this.processedIds.add(key);
 
     if (data.isWatched) {
+      this.processedIds.add(key);
       Logger.success('Урок уже пройден');
       markHeaderSuccess();
       return;
@@ -143,8 +142,11 @@ export class VideoMarkerPlugin implements IPlugin {
     const headers = await getAuthHeaders();
     if (!headers) {
       Logger.log('User not authenticated — skipping video auto-mark');
-      return;
+      return; // Don't mark as processed — user may log in later
     }
+
+    // Past the auth guard — mark as processed to prevent duplicate requests
+    this.processedIds.add(key);
 
     let token = localStorage.getItem(CONFIG.storage.videoToken);
 
