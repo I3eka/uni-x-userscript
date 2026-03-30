@@ -13,6 +13,7 @@ import type { IPlugin, IPluginContext } from '@core/plugin';
 import type {
   QuizQuestionsData,
   QuizResultData,
+  QuizHistoryItem,
   QuizCache,
   CloudAnswersMap,
 } from '@shared/types/api.types';
@@ -22,6 +23,32 @@ import { showToast } from '@shared/ui/toast';
 import { Logger } from '@shared/utils/logger';
 import { GMStorage } from '@core/storage';
 import { fetchCloudAnswers, saveCloudAnswers } from '@shared/api/cloud.api';
+
+/** Extract { question, correctAnswers } from a quiz item, or null if unusable. */
+function extractQA(
+  q: QuizHistoryItem,
+): { question: string; correctAnswers: string[] } | null {
+  const question =
+    q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
+  if (!question) return null;
+
+  const correct = (q.answers ?? []).filter((a) => a.isCorrect);
+
+  if (correct.length) {
+    return {
+      question,
+      correctAnswers: correct.map(
+        (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
+      ),
+    };
+  }
+
+  if (q.correctAnswerText) {
+    return { question, correctAnswers: [q.correctAnswerText] };
+  }
+
+  return null;
+}
 
 export class QuizSolverPlugin implements IPlugin {
   readonly name = 'QuizSolver';
@@ -86,39 +113,28 @@ export class QuizSolverPlugin implements IPlugin {
   /* ─── Process quiz check result ─── */
 
   private processQuizData(data: QuizResultData): void {
-    // If the test was passed outright, nothing to cache
-    if (data.questionsWithCorrectAnswers?.length) {
+    const passedAnswers = data.questionsWithCorrectAnswers ?? [];
+    const historyItems = data.history ?? [];
+
+    if (passedAnswers.length) {
       Logger.success('Тест сдан успешно.');
-      return;
     }
 
     const itemsToProcess: { question: string; correctAnswers: string[] }[] = [];
 
-    if (data.history?.length) {
+    // ── Passed test: extract from questionsWithCorrectAnswers ──
+    for (const q of passedAnswers) {
+      const item = extractQA(q);
+      if (item) itemsToProcess.push(item);
+    }
+
+    // ── Failed test: extract from history ──
+    if (historyItems.length) {
       Logger.log('Сохраняем ответы из истории.');
 
-      for (const q of data.history) {
-        if (q.answers?.length) {
-          const correct = q.answers.filter((a) => a.isCorrect);
-          if (correct.length) {
-            itemsToProcess.push({
-              question:
-                q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '',
-              correctAnswers: correct.map(
-                (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
-              ),
-            });
-          }
-        } else if (q.correctAnswerText) {
-          const question =
-            q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
-          if (question) {
-            itemsToProcess.push({
-              question,
-              correctAnswers: [q.correctAnswerText],
-            });
-          }
-        }
+      for (const q of historyItems) {
+        const item = extractQA(q);
+        if (item) itemsToProcess.push(item);
       }
     }
 
