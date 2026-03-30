@@ -23,6 +23,9 @@ import { TokenGenerator } from './token-generator';
 export class VideoMarkerPlugin implements IPlugin {
   readonly name = 'VideoMarker';
 
+  /** Lesson IDs already processed in this page lifecycle — prevents duplicate work. */
+  private readonly processedIds = new Set<string>();
+
   init(context: IPluginContext): void {
     this.interceptStorage();
 
@@ -121,6 +124,12 @@ export class VideoMarkerPlugin implements IPlugin {
   private async processLessonData(data: LessonData): Promise<void> {
     const currentId = window.location.href.match(/lessons\/(\d+)/)?.[1];
     if (String(data.id) !== String(currentId)) return;
+
+    // Idempotency: skip if we already handled this lesson in this page lifecycle.
+    // Prevents double processing when both proactiveFetch and Sniffer fire.
+    const key = String(data.id);
+    if (this.processedIds.has(key)) return;
+    this.processedIds.add(key);
 
     if (data.isWatched) {
       Logger.success('Урок уже пройден');
