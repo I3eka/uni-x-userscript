@@ -63,15 +63,18 @@ export class Sniffer {
     const origOpen = XMLHttpRequest.prototype.open;
 
     XMLHttpRequest.prototype.open = function (
-      this: XMLHttpRequest & { _unix_patched?: boolean },
+      this: XMLHttpRequest & { _unix_url?: string; _unix_patched?: boolean },
       _method: string,
       url: string | URL,
       ...rest: unknown[]
     ) {
+      // Always update the URL so reused XHR objects track the latest request.
+      this._unix_url = String(url);
+
       if (!this._unix_patched) {
-        const capturedUrl = String(url);
+        const xhr = this;
         this.addEventListener('load', function () {
-          self.handleResponse(capturedUrl, this.responseText);
+          self.handleResponse(xhr._unix_url!, xhr.responseText);
         });
         this._unix_patched = true;
       }
