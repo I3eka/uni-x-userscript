@@ -95,7 +95,9 @@ export class VideoMarkerPlugin implements IPlugin {
 
               if (
                 payload &&
-                lessonData.lastWatchedTime >= (payload.videoDuration ?? 0)
+                typeof payload.videoDuration === 'number' &&
+                payload.videoDuration > 0 &&
+                lessonData.lastWatchedTime >= payload.videoDuration
               ) {
                 const currentToken = localStorage.getItem(
                   CONFIG.storage.videoToken,
