@@ -109,11 +109,15 @@ export class QuizSolverPlugin implements IPlugin {
               ),
             });
           }
-        } else if (q.correctAnswerText && q.questionText) {
-          itemsToProcess.push({
-            question: q.questionText,
-            correctAnswers: [q.correctAnswerText],
-          });
+        } else if (q.correctAnswerText) {
+          const question =
+            q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
+          if (question) {
+            itemsToProcess.push({
+              question,
+              correctAnswers: [q.correctAnswerText],
+            });
+          }
         }
       }
     }
