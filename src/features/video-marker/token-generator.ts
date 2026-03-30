@@ -54,6 +54,8 @@ export class TokenGenerator {
           token: startData.token,
         }),
       });
+      if (!endRes.ok) throw new Error(`End request failed: ${endRes.status}`);
+
       const endData = (await endRes.json()) as { token?: string };
 
       if (endData.token) {
