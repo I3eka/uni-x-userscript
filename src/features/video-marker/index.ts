@@ -195,6 +195,9 @@ export class VideoMarkerPlugin implements IPlugin {
         showToast('\u267B\uFE0F Токен устарел, обновляю...', 'warn');
         await sleep(CONFIG.delays.reloadError);
         window.location.reload();
+      } else {
+        Logger.error(`Unexpected response: ${res.status}`);
+        showToast(`\u26A0\uFE0F Ошибка сервера (${res.status})`, 'error');
       }
     } catch (e) {
       Logger.error('Ошибка отметки:', e);
