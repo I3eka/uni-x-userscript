@@ -13,6 +13,7 @@ import type { IPlugin, IPluginContext } from '@core/plugin';
 import type {
   QuizQuestionsData,
   QuizResultData,
+  QuizHistoryItem,
   QuizCache,
   CloudAnswersMap,
 } from '@shared/types/api.types';
@@ -22,6 +23,32 @@ import { showToast } from '@shared/ui/toast';
 import { Logger } from '@shared/utils/logger';
 import { GMStorage } from '@core/storage';
 import { fetchCloudAnswers, saveCloudAnswers } from '@shared/api/cloud.api';
+
+/** Extract { question, correctAnswers } from a quiz item, or null if unusable. */
+function extractQA(
+  q: QuizHistoryItem,
+): { question: string; correctAnswers: string[] } | null {
+  const question =
+    q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
+  if (!question) return null;
+
+  const correct = (q.answers ?? []).filter((a) => a.isCorrect);
+
+  if (correct.length) {
+    return {
+      question,
+      correctAnswers: correct.map(
+        (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
+      ),
+    };
+  }
+
+  if (q.correctAnswerText) {
+    return { question, correctAnswers: [q.correctAnswerText] };
+  }
+
+  return null;
+}
 
 export class QuizSolverPlugin implements IPlugin {
   readonly name = 'QuizSolver';
@@ -97,25 +124,8 @@ export class QuizSolverPlugin implements IPlugin {
 
     // ── Passed test: extract from questionsWithCorrectAnswers ──
     for (const q of passedAnswers) {
-        const question =
-          q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
-        if (!question) continue;
-
-        const correct = (q.answers ?? []).filter((a) => a.isCorrect);
-
-        if (correct.length) {
-          itemsToProcess.push({
-            question,
-            correctAnswers: correct.map(
-              (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
-            ),
-          });
-        } else if (q.correctAnswerText) {
-          itemsToProcess.push({
-            question,
-            correctAnswers: [q.correctAnswerText],
-          });
-        }
+      const item = extractQA(q);
+      if (item) itemsToProcess.push(item);
     }
 
     // ── Failed test: extract from history ──
@@ -123,25 +133,8 @@ export class QuizSolverPlugin implements IPlugin {
       Logger.log('Сохраняем ответы из истории.');
 
       for (const q of historyItems) {
-        const question =
-          q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
-        if (!question) continue;
-
-        const correct = (q.answers ?? []).filter((a) => a.isCorrect);
-
-        if (correct.length) {
-          itemsToProcess.push({
-            question,
-            correctAnswers: correct.map(
-              (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
-            ),
-          });
-        } else if (q.correctAnswerText) {
-          itemsToProcess.push({
-            question,
-            correctAnswers: [q.correctAnswerText],
-          });
-        }
+        const item = extractQA(q);
+        if (item) itemsToProcess.push(item);
       }
     }
 

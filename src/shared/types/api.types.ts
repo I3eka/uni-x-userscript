@@ -40,7 +40,7 @@ interface QuizAnswer {
   isCorrect?: boolean;
 }
 
-interface QuizHistoryItem {
+export interface QuizHistoryItem {
   questionText?: string;
   questionTextRu?: string;
   questionTextKz?: string;
