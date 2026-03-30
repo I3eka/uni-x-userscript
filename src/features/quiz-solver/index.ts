@@ -144,7 +144,9 @@ export class QuizSolverPlugin implements IPlugin {
       GMStorage.set(CONFIG.storage.quizCache, this.cache);
       showToast(`\uD83E\uDDE0 Сохранено ответов: ${count}`);
       this.highlightAnswers();
-      void saveCloudAnswers(cloudPayload);
+      saveCloudAnswers(cloudPayload).catch(() => {
+        showToast('⚠️ Облачная синхронизация не удалась');
+      });
     }
   }
 
