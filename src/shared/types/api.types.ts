@@ -49,7 +49,7 @@ interface QuizHistoryItem {
 }
 
 export interface QuizResultData {
-  questionsWithCorrectAnswers?: QuizAnswer[];
+  questionsWithCorrectAnswers?: QuizHistoryItem[];
   history?: QuizHistoryItem[];
   [key: string]: unknown;
 }

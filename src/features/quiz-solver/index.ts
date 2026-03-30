@@ -86,14 +86,40 @@ export class QuizSolverPlugin implements IPlugin {
   /* ─── Process quiz check result ─── */
 
   private processQuizData(data: QuizResultData): void {
-    // If the test was passed outright, nothing to cache
     if (data.questionsWithCorrectAnswers?.length) {
       Logger.success('Тест сдан успешно.');
-      return;
     }
 
     const itemsToProcess: { question: string; correctAnswers: string[] }[] = [];
 
+    // ── Passed test: extract from questionsWithCorrectAnswers ──
+    if (data.questionsWithCorrectAnswers?.length) {
+      for (const q of data.questionsWithCorrectAnswers) {
+        if (q.answers?.length) {
+          const correct = q.answers.filter((a) => a.isCorrect);
+          if (correct.length) {
+            itemsToProcess.push({
+              question:
+                q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '',
+              correctAnswers: correct.map(
+                (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
+              ),
+            });
+          }
+        } else if (q.correctAnswerText) {
+          const question =
+            q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
+          if (question) {
+            itemsToProcess.push({
+              question,
+              correctAnswers: [q.correctAnswerText],
+            });
+          }
+        }
+      }
+    }
+
+    // ── Failed test: extract from history ──
     if (data.history?.length) {
       Logger.log('Сохраняем ответы из истории.');
 
