@@ -17,14 +17,14 @@ export class App {
   private readonly sniffer = new Sniffer(this.events);
   private readonly context: IPluginContext = { events: this.events };
 
-  bootstrap(): void {
+  async bootstrap(): Promise<void> {
     Logger.log('\uD83D\uDE80 Injecting...');
     injectStyles();
     this.sniffer.attach();
 
     for (const plugin of plugins) {
       try {
-        plugin.init(this.context);
+        await plugin.init(this.context);
         Logger.success(`Plugin loaded: ${plugin.name}`);
       } catch (error) {
         Logger.error(`Failed to load plugin ${plugin.name}:`, error);

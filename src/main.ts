@@ -9,7 +9,7 @@
 import { App } from '@app/main';
 
 function init(): void {
-  new App().bootstrap();
+  new App().bootstrap().catch((e) => console.error('[Uni-X] Bootstrap failed:', e));
 }
 
 if (document.readyState === 'loading') {
