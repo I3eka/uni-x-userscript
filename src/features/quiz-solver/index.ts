@@ -86,15 +86,17 @@ export class QuizSolverPlugin implements IPlugin {
   /* ─── Process quiz check result ─── */
 
   private processQuizData(data: QuizResultData): void {
-    if (data.questionsWithCorrectAnswers?.length) {
+    const passedAnswers = data.questionsWithCorrectAnswers ?? [];
+    const historyItems = data.history ?? [];
+
+    if (passedAnswers.length) {
       Logger.success('Тест сдан успешно.');
     }
 
     const itemsToProcess: { question: string; correctAnswers: string[] }[] = [];
 
     // ── Passed test: extract from questionsWithCorrectAnswers ──
-    if (data.questionsWithCorrectAnswers?.length) {
-      for (const q of data.questionsWithCorrectAnswers) {
+    for (const q of passedAnswers) {
         if (q.answers?.length) {
           const correct = q.answers.filter((a) => a.isCorrect);
           if (correct.length) {
@@ -116,14 +118,13 @@ export class QuizSolverPlugin implements IPlugin {
             });
           }
         }
-      }
     }
 
     // ── Failed test: extract from history ──
-    if (data.history?.length) {
+    if (historyItems.length) {
       Logger.log('Сохраняем ответы из истории.');
 
-      for (const q of data.history) {
+      for (const q of historyItems) {
         if (q.answers?.length) {
           const correct = q.answers.filter((a) => a.isCorrect);
           if (correct.length) {
