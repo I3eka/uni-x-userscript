@@ -97,26 +97,24 @@ export class QuizSolverPlugin implements IPlugin {
 
     // ── Passed test: extract from questionsWithCorrectAnswers ──
     for (const q of passedAnswers) {
-        if (q.answers?.length) {
-          const correct = q.answers.filter((a) => a.isCorrect);
-          if (correct.length) {
-            itemsToProcess.push({
-              question:
-                q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '',
-              correctAnswers: correct.map(
-                (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
-              ),
-            });
-          }
+        const question =
+          q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
+        if (!question) continue;
+
+        const correct = (q.answers ?? []).filter((a) => a.isCorrect);
+
+        if (correct.length) {
+          itemsToProcess.push({
+            question,
+            correctAnswers: correct.map(
+              (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
+            ),
+          });
         } else if (q.correctAnswerText) {
-          const question =
-            q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
-          if (question) {
-            itemsToProcess.push({
-              question,
-              correctAnswers: [q.correctAnswerText],
-            });
-          }
+          itemsToProcess.push({
+            question,
+            correctAnswers: [q.correctAnswerText],
+          });
         }
     }
 
@@ -125,26 +123,24 @@ export class QuizSolverPlugin implements IPlugin {
       Logger.log('Сохраняем ответы из истории.');
 
       for (const q of historyItems) {
-        if (q.answers?.length) {
-          const correct = q.answers.filter((a) => a.isCorrect);
-          if (correct.length) {
-            itemsToProcess.push({
-              question:
-                q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '',
-              correctAnswers: correct.map(
-                (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
-              ),
-            });
-          }
+        const question =
+          q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
+        if (!question) continue;
+
+        const correct = (q.answers ?? []).filter((a) => a.isCorrect);
+
+        if (correct.length) {
+          itemsToProcess.push({
+            question,
+            correctAnswers: correct.map(
+              (a) => a.answerText ?? a.answerTextRu ?? a.answerTextKz ?? '',
+            ),
+          });
         } else if (q.correctAnswerText) {
-          const question =
-            q.questionText ?? q.questionTextRu ?? q.questionTextKz ?? '';
-          if (question) {
-            itemsToProcess.push({
-              question,
-              correctAnswers: [q.correctAnswerText],
-            });
-          }
+          itemsToProcess.push({
+            question,
+            correctAnswers: [q.correctAnswerText],
+          });
         }
       }
     }
