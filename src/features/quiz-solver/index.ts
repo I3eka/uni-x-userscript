@@ -77,8 +77,10 @@ export class QuizSolverPlugin implements IPlugin {
     if (addedCount > 0) {
       GMStorage.set(CONFIG.storage.quizCache, this.cache);
       showToast(`\u2601\uFE0F База: Загружено ${addedCount} новых ответов!`);
-      this.highlightAnswers();
     }
+
+    // Always highlight — local cache may have hits even when cloud returns nothing
+    this.highlightAnswers();
   }
 
   /* ─── Process quiz check result ─── */

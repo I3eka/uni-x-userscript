@@ -42,7 +42,7 @@ export class VideoMarkerPlugin implements IPlugin {
     // Wait for DOM to be ready (we run at document-start)
     if (document.readyState === 'loading') {
       await new Promise<void>((r) =>
-        document.addEventListener('DOMContentLoaded', () => r()),
+        document.addEventListener('DOMContentLoaded', () => r(), { once: true }),
       );
     }
 
