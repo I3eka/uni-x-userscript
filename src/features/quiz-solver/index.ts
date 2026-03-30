@@ -184,8 +184,8 @@ export class QuizSolverPlugin implements IPlugin {
 
   private initObserver(): void {
     new MutationObserver((mutations) => {
-      const hasNewElements = mutations.some(
-        (m) => m.addedNodes.length > 0 && m.addedNodes[0]?.nodeType === 1,
+      const hasNewElements = mutations.some((m) =>
+        Array.from(m.addedNodes).some((n) => n.nodeType === 1),
       );
       if (hasNewElements) {
         this.highlightAnswers();
