@@ -7,7 +7,9 @@ import { CONFIG } from '@shared/config';
 /** Decode a JWT payload without validation. */
 export function parseJwt(token: string): Record<string, unknown> | null {
   try {
-    const base64 = token.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/');
+    let base64 = token.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/');
+    // Restore padding stripped by base64url encoding
+    base64 += '='.repeat((4 - (base64.length % 4)) % 4);
     const binary = window.atob(base64);
     const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
     return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
